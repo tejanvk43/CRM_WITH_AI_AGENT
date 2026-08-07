@@ -16,29 +16,58 @@ import json
 COST_NBA_USD = 0.01
 
 
-import os
-from openai import OpenAI
-from dotenv import load_dotenv
-
-load_dotenv()
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-
 def call_reasoning_llm(system_prompt: str, user_message: str) -> str:
-    """Uses OpenAI gpt-4o for high-stakes reasoning."""
+    """Queries the Sarvam AI Chat Completion API to get dynamic sales suggestions."""
+    import os
+    import httpx
+    
+    api_key = os.environ.get("SARVAM_API_KEY", "sk_ouoli4yi_TeQxY387JyL86NPGEaG7KRAP")
+    if not api_key:
+        return _fallback_reasoning_llm(user_message)
+        
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
+        headers = {
+            "api-subscription-key": api_key,
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "sarvam-105b-conversations",
+            "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message}
-            ],
-            temperature=0.7,
-            max_tokens=150
-        )
-        return response.choices[0].message.content or "No suggestion generated."
+            ]
+        }
+        resp = httpx.post("https://api.sarvam.ai/v1/chat/completions", json=payload, headers=headers, timeout=10.0)
+        if resp.status_code == 200:
+            data = resp.json()
+            choices = data.get("choices", [])
+            if choices:
+                return choices[0]["message"]["content"].strip()
+        print(f"[Sarvam LLM Error in NBA] Status={resp.status_code} | Body={resp.text}")
     except Exception as e:
-        print(f"OpenAI API Error: {e}")
-        return "System error: unable to generate suggestion."
+        print(f"[Sarvam LLM Exception in NBA] {e}")
+        
+    return _fallback_reasoning_llm(user_message)
+
+
+def _fallback_reasoning_llm(user_message: str) -> str:
+    msg = user_message.lower()
+    if "objection" in msg:
+        return ("Acknowledge the concern warmly. Remind the customer that FlexiPay charges "
+                "ZERO interest — the ₹199 late fee only applies after a 3-day grace period "
+                "and is waived on the first missed payment.")
+    elif "kyc_question" in msg or "document" in msg or "paperwork" in msg:
+        return ("Reassure the customer — KYC is 100% digital and takes under 10 minutes. "
+                "Offer to send a secure onboarding link via SMS right now.")
+    elif "ready_to_convert" in msg or "signup" in msg or "link" in msg:
+        return ("Great — send the SMS registration link immediately. "
+                "Remind them their pre-approved limit is reserved for 7 days.")
+    elif "product_question" in msg or "interest" in msg or "fee" in msg or "services" in msg:
+        return ("Confirm: 0% interest for 3 months, zero processing fee, no prepayment penalty. "
+                "Ask which upcoming purchase they have in mind to check the ₹3,000 minimum.")
+    else:
+        return ("Build rapport — ask if they have a specific purchase in mind "
+                "that qualifies for the ₹3,000 minimum transaction threshold.")
 
 
 def nba_node(state: dict) -> dict:
@@ -55,13 +84,33 @@ def nba_node(state: dict) -> dict:
     facts = state.get("retrieved_facts", [])
     history = state.get("call_history", [])
 
+    # Build a customer-name from call history
+    customer_text = " | ".join(
+        t.get("text", "") for t in history if t.get("speaker") == "customer"
+    ) or "(unknown)"
+
+    # Facts grounded from the ChromaDB knowledge base
+    facts_block = "\n".join(f"- {f}" for f in facts if f) or "No specific facts retrieved."
+
     system_prompt = (
-        "You are an AI sales coach inside an inside-sales voice co-pilot. "
-        "Review the customer's intent, facts retrieved from the knowledge base, "
-        "and conversation history. Provide ONE concrete, actionable recommendation "
-        "for the human sales agent. Keep it to a maximum of 2 sentences."
+        "You are Priya, a friendly and professional phone sales representative for FlexiPay, "
+        "a zero-interest pay-in-3 installments product for Indian consumers.\n"
+        "You are speaking DIRECTLY to a customer on a live phone call.\n\n"
+        "Rules:\n"
+        "- Respond DIRECTLY to the customer's question in 1-2 short, warm, conversational sentences.\n"
+        "- Use the product facts provided — do NOT invent information.\n"
+        "- Keep total response under 30 words — this will be read aloud over a phone call.\n"
+        "- Use simple English. Do NOT use markdown, bullet points, or formatting.\n"
+        "- Do NOT start with 'I' or 'As a'. Start with the answer directly or a warm acknowledgment.\n"
+        "- Core facts: 0% interest for 3 months, Rs 199 late fee waived on first miss, "
+        "minimum Rs 3000 transaction, KYC is fully digital and takes under 10 minutes."
     )
-    user_msg = f"Intent: {intent}\nRetrieved Facts: {json.dumps(facts)}\nCall History: {json.dumps(history)}"
+    user_msg = (
+        f"Customer said: {customer_text}\n\n"
+        f"Grounded product facts:\n{facts_block}\n\n"
+        f"Customer intent: {intent}\n\n"
+        "Reply to the customer directly in 1-2 short sentences:"
+    )
 
     suggestion = call_reasoning_llm(system_prompt, user_msg)
 

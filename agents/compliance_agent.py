@@ -24,35 +24,16 @@ SENSITIVE_KEYWORDS = [
 COST_COMPLIANCE_USD = 0.0002
 
 
-import os
-from openai import OpenAI
-from dotenv import load_dotenv
-
-load_dotenv()
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-
 def check_compliance_llm(text: str) -> bool:
-    """Uses OpenAI gpt-4o-mini to confirm high-risk terms."""
-    try:
-        system_prompt = (
-            "You are a compliance monitor. If the customer asks for a 'guarantee' on approval, "
-            "or an 'interest rate change', or 'limit modification', return True. Otherwise False. "
-            "Return only the word True or False."
-        )
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": text}
-            ],
-            temperature=0.0,
-            max_tokens=10
-        )
-        answer = response.choices[0].message.content.strip().lower()
-        return "true" in answer
-    except Exception as e:
-        print(f"OpenAI API Error in compliance: {e}")
-        return False
+    """Local rule-based compliance check — zero cost, instant."""
+    t = text.lower()
+    if "guarantee" in t and ("approval" in t or "approve" in t or "loan" in t):
+        return True
+    if "interest rate" in t and ("change" in t or "modify" in t or "waive" in t):
+        return True
+    if "guarantee" in t and "limit" in t:
+        return True
+    return False
 
 
 def compliance_node(state: dict) -> dict:

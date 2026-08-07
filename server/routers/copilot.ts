@@ -250,13 +250,12 @@ export const copilotRouter = {
     const db = await getDb();
     if (db) {
       try {
-        const rows = await db.select().from(leads).orderBy(desc(leads.createdAt));
-        if (rows.length > 0) return rows;
+        return await db.select().from(leads).orderBy(desc(leads.createdAt));
       } catch (error) {
-        console.warn("[Database] Failed to select leads, falling back to memory:", error);
+        console.error("[Database] Failed to select leads:", error);
       }
     }
-    return leadsInMemory;
+    return [];
   }),
 
   createLead: publicProcedure
@@ -274,34 +273,16 @@ export const copilotRouter = {
       const email = input.email || null;
       const notes = input.notes || "New prospect lead.";
 
-      if (db) {
-        try {
-          await db.insert(leads).values({
-            name: input.name,
-            phone: input.phone,
-            email,
-            creditScore: input.creditScore,
-            notes,
-          });
-          return { success: true };
-        } catch (error) {
-          console.warn("[Database] Failed to insert lead, falling back to memory:", error);
-        }
+      if (!db) {
+        throw new Error("Database not available.");
       }
 
-      // Memory fallback
-      const newId = leadsInMemory.length > 0 ? Math.max(...leadsInMemory.map(l => l.id)) + 1 : 1;
-      leadsInMemory.unshift({
-        id: newId,
+      await db.insert(leads).values({
         name: input.name,
         phone: input.phone,
-        email: email || "",
-        status: "lead",
+        email,
         creditScore: input.creditScore,
-        approvedLimit: null,
         notes,
-        lastCallAt: null,
-        createdAt: new Date().toISOString(),
       });
       return { success: true };
     }),
@@ -313,27 +294,12 @@ export const copilotRouter = {
         await db.delete(callTranscripts);
         await db.delete(calls);
         await db.delete(leads);
-        for (const l of INITIAL_MOCK_LEADS) {
-          await db.insert(leads).values({
-            name: l.name,
-            phone: l.phone,
-            email: l.email || null,
-            status: l.status,
-            creditScore: l.creditScore,
-            approvedLimit: l.approvedLimit,
-            notes: l.notes,
-            lastCallAt: l.lastCallAt ? new Date(l.lastCallAt) : null,
-          });
-        }
         return { success: true };
       } catch (error) {
-        console.warn("[Database] Failed to reset DB leads:", error);
+        console.error("[Database] Failed to clear DB leads:", error);
+        throw error;
       }
     }
-
-    leadsInMemory = [...INITIAL_MOCK_LEADS.map(l => ({ ...l }))];
-    callsInMemory = [];
-    costLog.length = 0;
     return { success: true };
   }),
 
@@ -388,15 +354,34 @@ export const copilotRouter = {
         lead.lastCallAt = now.toISOString();
       }
 
-      // Initialize FastAPI LangGraph State
+      // Fetch the lead's phone number
+      let phone = "";
+      if (db) {
+        try {
+          const leadRows = await db.select({ phone: leads.phone }).from(leads).where(eq(leads.id, input.leadId)).limit(1);
+          if (leadRows[0]) {
+            phone = leadRows[0].phone;
+          }
+        } catch (err) {
+          console.warn("[Database] Failed to get lead phone:", err);
+        }
+      }
+      if (!phone) {
+        const lead = leadsInMemory.find(l => l.id === input.leadId);
+        if (lead) {
+          phone = lead.phone;
+        }
+      }
+
+      // Initialize FastAPI LangGraph State & Trigger actual Twilio Outbound call
       try {
-        await fetch("http://127.0.0.1:8000/call/start", {
+        await fetch("http://127.0.0.1:8000/twilio/call/outbound", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ call_id: callId }),
+          body: JSON.stringify({ phone, lead_id: input.leadId }),
         });
       } catch (err) {
-        console.warn("[FastAPI] Failed to start call:", err);
+        console.warn("[FastAPI] Failed to trigger outbound call:", err);
       }
 
       return { callId };
@@ -657,5 +642,44 @@ export const copilotRouter = {
         summary,
         approvedLimit,
       };
+    }),
+
+  getCalls: publicProcedure.query(async () => {
+    const db = await getDb();
+    if (db) {
+      try {
+        const callRows = await db.select().from(calls).orderBy(desc(calls.createdAt));
+        const leadRows = await db.select().from(leads);
+        return callRows.map(c => {
+          const lead = leadRows.find(l => l.id === c.leadId);
+          return {
+            ...c,
+            leadName: lead ? lead.name : "Unknown",
+            leadPhone: lead ? lead.phone : "",
+          };
+        });
+      } catch (error) {
+        console.error("[Database] Failed to get calls:", error);
+      }
+    }
+    return [];
+  }),
+
+  getCallTranscript: publicProcedure
+    .input(z.object({ callId: z.number() }))
+    .query(async ({ input }) => {
+      const db = await getDb();
+      if (db) {
+        try {
+          return await db
+            .select()
+            .from(callTranscripts)
+            .where(eq(callTranscripts.callId, input.callId))
+            .orderBy(callTranscripts.id);
+        } catch (error) {
+          console.error("[Database] Failed to get call transcripts:", error);
+        }
+      }
+      return [];
     }),
 };
