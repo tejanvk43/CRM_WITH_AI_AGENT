@@ -1,0 +1,7 @@
+timestamp,customer_speech,stt_latency_sec,api_latency_sec,tts_latency_sec,total_latency_sec
+2026-08-07 23:46:40,"Hello, I am interested in the Pay-in-3 plan. How does it work?",0.0000,0.0407,0.1622,0.2029
+2026-08-07 23:46:43,Is there really no interest rate at all?,0.0000,0.0390,0.1644,0.2033
+2026-08-07 23:46:46,"Wait, what are the fees? Nothing is ever free, I feel like there are hidden charges.",0.0000,0.0377,0.1615,0.1992
+2026-08-07 23:46:48,I see. What documents do I need to share to get onboarding?,0.0000,0.0375,0.1848,0.2223
+2026-08-07 23:46:51,Can you guarantee my loan approval? I don't want a hard inquiry for nothing.,0.0000,0.0383,0.0000,0.0383
+2026-08-07 23:46:54,"Okay, that's fine. Send me the signup link, let's proceed.",0.0000,0.0392,0.1588,0.1981

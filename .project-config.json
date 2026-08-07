@@ -1,0 +1,42 @@
+{
+  "build_command": "pnpm run build",
+  "capabilities": [
+    "server",
+    "db",
+    "user"
+  ],
+  "dev_command": "pnpm run dev",
+  "env_vars": {
+    "DATABASE_URL": "mysql://3kZN3oXmK9D38P3.root:1DLORZmZz5x8KMr50gt4@gateway03.us-east-1.prod.aws.tidbcloud.com:4000/H5MapZfJxquLfJg8nqx8dP?ssl={\"rejectUnauthorized\":true}"
+  },
+  "experiments": [
+    "no_db_push"
+  ],
+  "git_remote": {
+    "repo_url": "https://7f0548f6b28a1758d9bf7be630d36cb4.artifacts.cloudflare.net/git/prod/H5MapZfJxquLfJg8nqx8dP.git",
+    "expiration": "2026-08-08T17:32:26.788Z",
+    "token": "art_v1_609e30308cadb63bc9c8c8a797bc110825fd4b88?expires=1786210346",
+    "backend": "GIT_BACKEND_ARTIFACTS"
+  },
+  "name": "flexipay-voice-copilot",
+  "path": "/home/ubuntu/flexipay-voice-copilot",
+  "port": 3000,
+  "secrets": {
+    "BUILT_IN_FORGE_API_KEY": "Q8qEDfyXunLYrNm8oKcVxt",
+    "BUILT_IN_FORGE_API_URL": "https://forge.manus.ai",
+    "JWT_SECRET": "LRe5bAUKayPXhu9pgPnBKw",
+    "OAUTH_SERVER_URL": "https://api.manus.im",
+    "OWNER_NAME": "Teja naga venkata kishore Teja",
+    "OWNER_OPEN_ID": "BDMpYsgVx5e3kmzTiipeU5",
+    "VITE_ANALYTICS_ENDPOINT": "https://manus-analytics.com",
+    "VITE_ANALYTICS_WEBSITE_ID": "0a3dfb93-2c24-48ae-83e8-217cf2206f2e",
+    "VITE_APP_ID": "H5MapZfJxquLfJg8nqx8dP",
+    "VITE_APP_LOGO": "",
+    "VITE_APP_TITLE": "FlexiPay Voice Co-Pilot",
+    "VITE_FRONTEND_FORGE_API_KEY": "VuUXYDZaa2sbAeGmhZBrp2",
+    "VITE_FRONTEND_FORGE_API_URL": "https://forge.manus.ai",
+    "VITE_OAUTH_PORTAL_URL": "https://manus.im"
+  },
+  "template_id": "web-db-user",
+  "test_command": "pnpm test"
+}
