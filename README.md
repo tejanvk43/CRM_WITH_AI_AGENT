@@ -75,3 +75,5 @@ graph TD
    Build a post-call webhook that automatically sends SMS/Email signup links to the customer if the "ready_to_convert" intent was achieved.
 4. **Deploy to Cloud**:
    Push the containerized Python backend to AWS/Render and the React UI to Vercel.
+5. **Should Enhance the UI**:
+   Need to make the CRM beautiful and user friendly.
