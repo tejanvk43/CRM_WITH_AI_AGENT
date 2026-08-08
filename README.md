@@ -563,25 +563,10 @@ Call terminates ONLY if:
 - Customer says an explicit goodbye phrase (bye, goodbye, end call, hang up, thank you bye).
 - Silence count exceeds 5 retries.
 
----
-
-## 11. Multilingual Support (English + Telugu)
-
-| Language | Code | Polly Voice | Sarvam Speaker |
-|---|---|---|---|
-| Indian English | en-IN | Polly.Kajal-Neural | tanya |
-| Telugu | te-IN | Polly.Aditi | meera |
-
-Sarvam `bulbul:v3` natively supports Telugu at production quality, including:
-- Pure Telugu sentences.
-- Code-mixed Telugu-English (common in AP/Telangana sales calls).
-- Financial terminology in both languages.
-
-`sarvam-105b-conversations` is trained on Indian language data including Telugu, so the NBA agent generates responses in Telugu when prompted.
 
 ---
 
-## 12. TTS Text Normalisation
+## 11. TTS Text Normalisation
 
 The `normalize_text_for_tts()` function prevents the voice engine from spelling symbols or characters literally.
 
@@ -600,7 +585,7 @@ The regex `\b([a-zA-Z])([,.\-][,.\- ]?[a-zA-Z]){2,}\b` catches any letter-by-let
 
 ---
 
-## 13. Startup Warmup & Latency Optimisation
+## 12. Startup Warmup & Latency Optimisation
 
 ```python
 @app.on_event("startup")
@@ -615,7 +600,7 @@ After warmup: Every turn takes 0.7-1.5 seconds (everything pre-loaded in RAM).
 
 ---
 
-## 14. Security & Compliance
+## 13. Security & Compliance
 
 ### Data Privacy
 - Consent collected at call start per Digital Personal Data Protection Act (DPDP) 2023.
@@ -637,7 +622,7 @@ After warmup: Every turn takes 0.7-1.5 seconds (everything pre-loaded in RAM).
 
 ---
 
-## 15. Environment Variables Reference
+## 14. Environment Variables Reference
 
 | Variable | Required | Description |
 |---|---|---|
@@ -658,7 +643,7 @@ After warmup: Every turn takes 0.7-1.5 seconds (everything pre-loaded in RAM).
 
 ---
 
-## 16. Running the Project Locally
+## 15. Running the Project Locally
 
 ### Prerequisites
 
@@ -707,21 +692,7 @@ In Twilio Console -> Phone Numbers -> Your Number:
 
 ---
 
-## 17. Docker Deployment
-
-```bash
-# Build
-docker build -t flexipay-crm .
-
-# Run
-docker run -p 8000:8000 --env-file .env flexipay-crm
-```
-
-The Dockerfile uses `python:3.9-slim`, installs gcc for native extensions, and launches uvicorn on port 8000.
-
----
-
-## 18. API Endpoint Reference
+## 16. API Endpoint Reference
 
 ### Core REST (main.py)
 
@@ -751,7 +722,7 @@ The Dockerfile uses `python:3.9-slim`, installs gcc for native extensions, and l
 
 ---
 
-## 19. Conversation Flow Walkthrough
+## 17. Conversation Flow Walkthrough
 
 ```
 Customer calls +15625736985
@@ -796,7 +767,7 @@ Twilio fires POST /twilio/gather?call_id=42
 
 ---
 
-## 20. Cost Model
+## 18. Cost Model
 
 | Agent | Model | Cost per Turn |
 |---|---|---|
