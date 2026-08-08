@@ -21,8 +21,10 @@ def call_reasoning_llm(system_prompt: str, user_message: str) -> str:
     import os
     import httpx
     
-    api_key = os.environ.get("SARVAM_API_KEY", "sk_ouoli4yi_TeQxY387JyL86NPGEaG7KRAP")
+    # Credentials come ONLY from the environment — never hardcode keys in source.
+    api_key = os.environ.get("SARVAM_API_KEY")
     if not api_key:
+        print("[NBA] SARVAM_API_KEY not set — using keyword fallback.")
         return _fallback_reasoning_llm(user_message)
         
     try:

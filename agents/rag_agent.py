@@ -63,8 +63,10 @@ def call_expensive_llm(system_prompt: str, user_message: str) -> str:
     """Queries the Sarvam AI Chat Completion API using the conversations model."""
     import httpx
     
-    api_key = os.environ.get("SARVAM_API_KEY", "sk_ouoli4yi_TeQxY387JyL86NPGEaG7KRAP")
+    # Credentials come ONLY from the environment — never hardcode keys in source.
+    api_key = os.environ.get("SARVAM_API_KEY")
     if not api_key:
+        print("[RAG] SARVAM_API_KEY not set — using keyword fallback.")
         return _fallback_expensive_llm(user_message)
         
     try:

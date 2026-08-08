@@ -12,8 +12,6 @@ Exposes endpoints:
 import sys
 import os
 import operator
-import traceback
-import logging
 from typing import Annotated, List, Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -21,14 +19,6 @@ from typing_extensions import TypedDict
 
 # Put current working directory on path for module imports
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
-# Structured diagnostic logging — every major stage of a call is traced.
-# Do not silence these; they are the primary debug signal for webhook failures.
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-)
-logger = logging.getLogger("main")
 
 from agents.intent_agent import intent_node
 from agents.rag_agent import rag_node
@@ -64,8 +54,7 @@ def run_intent_node(state: AgentState) -> dict:
             "cost_log": out.get("cost_log", [])
         }
     except Exception as e:
-        logger.error("[Intent node error] %s", e)
-        traceback.print_exc()
+        print(f"[Intent node error] {e}")
         return {"intent": "product_question", "sentiment": "neutral", "cost_log": []}
 
 
@@ -77,8 +66,7 @@ def run_rag_node(state: AgentState) -> dict:
             "cost_log": out.get("cost_log", [])
         }
     except Exception as e:
-        logger.error("[RAG node error] %s", e)
-        traceback.print_exc()
+        print(f"[RAG node error] {e}")
         return {"retrieved_facts": [], "cost_log": []}
 
 
@@ -94,8 +82,7 @@ def run_nba_node(state: AgentState) -> dict:
             "cost_log": out.get("cost_log", [])
         }
     except Exception as e:
-        logger.error("[NBA node error] %s", e)
-        traceback.print_exc()
+        print(f"[NBA node error] {e}")
         return {"suggestion": "Thank you for your question. Let me connect you with a specialist who can help.", "cost_log": []}
 
 
@@ -111,8 +98,7 @@ def run_compliance_node(state: AgentState) -> dict:
             "cost_log": out.get("cost_log", [])
         }
     except Exception as e:
-        logger.error("[Compliance node error] %s", e)
-        traceback.print_exc()
+        print(f"[Compliance node error] {e}")
         return {"compliance_flag": False, "suggestion": state.get("suggestion", ""), "cost_log": []}
 
 
@@ -211,14 +197,6 @@ def start_call(payload: CallStartRequest):
 
 @app.post("/call/turn", response_model=CallTurnResponse)
 def process_turn(payload: CallTurnRequest):
-    """Synchronous LangGraph turn processor.
-
-    This function is CPU-bound and may take several seconds (the first turn of
-    a fresh process cold-loads the sentence-transformers embedding model and
-    the ChromaDB index). The Twilio webhook calls it from `twilio_router`
-    inside `asyncio.to_thread` with a timeout budget, so it must remain pure
-    and safe to run in a worker thread (no event-loop work inside).
-    """
     # Gracefully handle missing start call triggers
     if payload.call_id not in ACTIVE_CALLS:
         ACTIVE_CALLS[payload.call_id] = {
@@ -242,8 +220,7 @@ def process_turn(payload: CallTurnRequest):
         # Run StateGraph
         final_state = graph.invoke(initial_state)
     except Exception as e:
-        logger.error("[Graph invoke error] %s", e)
-        traceback.print_exc()
+        print(f"[Graph invoke error] {e}")
         # Return a safe fallback so the Twilio call keeps going
         return {
             "intent": "product_question",

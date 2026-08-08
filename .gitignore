@@ -7,7 +7,7 @@ venv/
 .venv/
 env/
 .env
-
+.manus-logs/
 # Node.js
 node_modules/
 dist/

@@ -1,10 +1,7 @@
 import os
 import uuid
-import asyncio
 import httpx
 import base64
-import logging
-import traceback
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from fastapi import APIRouter, Request, Body
@@ -15,41 +12,23 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# ---------------------------------------------------------------- Logging
-# Structured diagnostic logging — every major stage of a call is traced.
-# The stage tags ([GATHER], [AI], [DB], [TTS], [TWILIO]) are the primary
-# debug signal when a call drops; do not silence them.
-logger = logging.getLogger("twilio_router")
-
-# ---------------------------------------------------------------- The public-facing base URL (ngrok in dev, your real domain in prod)
+# The public-facing base URL (ngrok in dev, your real domain in prod)
 PUBLIC_BASE_URL = os.environ.get("NGROK_URL", "http://127.0.0.1:8000").rstrip("/")
-
-# ---------------------------------------------------------------- Secrets MUST come from the environment.
-# No credentials are hardcoded anywhere in this file anymore.
-SARVAM_API_KEY = os.environ.get("SARVAM_API_KEY")
-if not SARVAM_API_KEY:
-    logger.warning("[SECRETS] SARVAM_API_KEY is not set — Sarvam TTS will fail and the <Say> fallback will be used. Set SARVAM_API_KEY in .env.")
+SARVAM_API_KEY = os.environ.get("SARVAM_API_KEY", "sk_ouoli4yi_TeQxY387JyL86NPGEaG7KRAP")
 
 # Setup directory to cache generated TTS files
 AUDIO_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "audio_cache")
 os.makedirs(AUDIO_CACHE_DIR, exist_ok=True)
-
-# Budget for synchronous AI processing inside the Twilio webhook.
-# Twilio hangs up if a webhook takes longer than 15 seconds, so we leave
-# headroom for TTS + response rendering.
-AI_PROCESSING_TIMEOUT_SECONDS = 13.0
 
 router = APIRouter()
 
 # ---------------------------------------------------------------- Database Connection Helper
 def get_db_connection():
     """
-    Safely connects to the Supabase database, parsing the DATABASE_URL manually
+    Safely connects to the Supabase database, parsing the DATABASE_URL manually 
     to handle password strings containing special symbols like '@'.
     """
     db_url = os.environ.get("DATABASE_URL", "")
-    if not db_url:
-        raise RuntimeError("DATABASE_URL is not set in the environment")
     try:
         if "://" in db_url:
             protocol, rest = db_url.split("://", 1)
@@ -57,7 +36,7 @@ def get_db_connection():
             user, password = user_pass.split(":", 1)
             host_port, dbname = host_port_db.split("/", 1)
             host, port = host_port.split(":", 1)
-
+            
             return psycopg2.connect(
                 host=host,
                 port=int(port),
@@ -66,8 +45,7 @@ def get_db_connection():
                 database=dbname
             )
     except Exception as e:
-        logger.error("[DB Connect Error] Custom parsing failed: %s. Falling back to default psycopg2 parsing.", e)
-        traceback.print_exc()
+        print(f"[DB Connect Error] Custom parsing failed: {e}. Falling back to default psycopg2 parsing.")
     return psycopg2.connect(db_url)
 
 
@@ -87,7 +65,7 @@ def get_or_create_lead_by_phone(phone: str) -> dict:
                 lead_phone_clean = "".join(c for c in lead["phone"] if c.isdigit())
                 if clean_phone.endswith(lead_phone_clean) or lead_phone_clean.endswith(clean_phone):
                     return lead
-
+            
             # Create dynamic lead if not existing
             cur.execute(
                 "INSERT INTO leads (name, phone, status, \"creditScore\", \"approvedLimit\", notes) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id, name, phone, \"creditScore\"",
@@ -97,8 +75,7 @@ def get_or_create_lead_by_phone(phone: str) -> dict:
             conn.commit()
             return lead
     except Exception as e:
-        logger.error("[DB Error] get_or_create_lead_by_phone failed: %s", e)
-        traceback.print_exc()
+        print(f"[DB Error] get_or_create_lead_by_phone failed: {e}")
         return {"id": 1, "name": "Prospect", "phone": phone, "creditScore": 700}
     finally:
         conn.close()
@@ -120,8 +97,7 @@ def create_call_record(lead_id: int) -> int:
             conn.commit()
             return call_id
     except Exception as e:
-        logger.error("[DB Error] create_call_record failed: %s", e)
-        traceback.print_exc()
+        print(f"[DB Error] create_call_record failed: {e}")
         # Generate arbitrary fallback session ID
         return hash(str(lead_id)) % 100000
     finally:
@@ -141,8 +117,7 @@ def persist_transcript_turn(call_id: int, speaker: str, text: str, intent: str =
             )
             conn.commit()
     except Exception as e:
-        logger.error("[DB Error] persist_transcript_turn failed: %s", e)
-        traceback.print_exc()
+        print(f"[DB Error] persist_transcript_turn failed: {e}")
     finally:
         conn.close()
 
@@ -164,8 +139,7 @@ def update_call_cost(call_id: int, add_cost: float):
             )
             conn.commit()
     except Exception as e:
-        logger.error("[DB Error] update_call_cost failed: %s", e)
-        traceback.print_exc()
+        print(f"[DB Error] update_call_cost failed: {e}")
     finally:
         conn.close()
 
@@ -174,12 +148,12 @@ def update_call_cost(call_id: int, add_cost: float):
 async def generate_sarvam_audio(text: str) -> str:
     """
     Converts text to natural-sounding Indic voice using Sarvam AI's Text-to-Speech REST API.
-    Saves the mp3 file into the audio cache directory and returns the cached filename.
+    Saves the wav file into the audio cache directory and returns the cached filename.
     """
     if not SARVAM_API_KEY:
-        logger.warning("[TTS] Skipping Sarvam — SARVAM_API_KEY is not set.")
+        print("[Sarvam TTS Warning] No SARVAM_API_KEY set.")
         return None
-
+        
     try:
         url = "https://api.sarvam.ai/text-to-speech"
         headers = {
@@ -193,7 +167,7 @@ async def generate_sarvam_audio(text: str) -> str:
             "model": "bulbul:v3",
             "output_audio_codec": "mp3"
         }
-
+        
         async with httpx.AsyncClient() as client:
             resp = await client.post(url, json=payload, headers=headers, timeout=12.0)
             if resp.status_code == 200:
@@ -205,15 +179,11 @@ async def generate_sarvam_audio(text: str) -> str:
                     filepath = os.path.join(AUDIO_CACHE_DIR, filename)
                     with open(filepath, "wb") as f:
                         f.write(audio_bytes)
-                    logger.debug("[TTS] Sarvam completed -> %s (%d bytes)", filename, len(audio_bytes))
                     return filename
-                else:
-                    logger.warning("[TTS] Sarvam HTTP 200 but empty 'audios' list: %s", resp.text)
             else:
-                logger.error("[TTS] Sarvam HTTP %s: %s", resp.status_code, resp.text)
+                print(f"[Sarvam TTS Error] HTTP {resp.status_code}: {resp.text}")
     except Exception as e:
-        logger.error("[TTS] Sarvam failed to convert: %s", e)
-        traceback.print_exc()
+        print(f"[Sarvam TTS Exception] failed to convert: {e}")
     return None
 
 
@@ -227,7 +197,7 @@ async def speak_text(response: VoiceResponse, text: str):
         audio_url = f"{PUBLIC_BASE_URL}/twilio/audio/{filename}"
         response.play(audio_url)
     else:
-        # High quality fallback (built-in, no external dependency)
+        # High quality fallback
         response.say(text, voice='alice')
 
 
@@ -238,13 +208,7 @@ async def twilio_voice(request: Request):
     Webhook endpoint for incoming Twilio Voice calls.
     Lookup or create lead, start database call record, greet the user, and collect speech.
     """
-    try:
-        form_data = await request.form()
-    except Exception as e:
-        logger.error("[TWILIO] /voice failed to read form data: %s", e)
-        traceback.print_exc()
-        return PlainTextResponse("<Response><Say>Welcome to FlexiPay. How can I help you today?</Say></Response>", media_type="text/xml")
-
+    form_data = await request.form()
     call_sid = form_data.get("CallSid")
     from_phone = form_data.get("From", "")
 
@@ -263,14 +227,15 @@ async def twilio_voice(request: Request):
 
     # Pass call_id as query parameter to identify the session in the gather step
     gather_url = f"{PUBLIC_BASE_URL}/twilio/gather?call_id={call_id}"
-
-    logger.info("[TWILIO] /voice | CallSid=%s | lead_id=%s | call_id=%s | gather_url=%s", call_sid, lead["id"], call_id, gather_url)
+    status_url = f"{PUBLIC_BASE_URL}/twilio/status?call_id={call_id}"
+    
+    print(f"[Twilio /voice] CallSid={call_sid} | lead_id={lead['id']} | call_id={call_id} | gather_url={gather_url}")
 
     response = VoiceResponse()
-
+    
     # Generate the initial greeting text
     consent = "Welcome to FlexiPay. This call is AI-assisted and recorded for quality and compliance. How can I help you today?"
-
+    
     # Persist the initial greeting text to database
     persist_transcript_turn(call_id, "agent", consent, cost_usd=0.0)
 
@@ -278,7 +243,7 @@ async def twilio_voice(request: Request):
     gather = Gather(input='speech', action=gather_url, method='POST', speechTimeout='auto')
     await speak_text(gather, consent)
     response.append(gather)
-
+    
     # If the user remains silent, redirect to gather_url to trigger silent count retries
     response.redirect(gather_url)
     return PlainTextResponse(str(response), media_type="text/xml")
@@ -288,136 +253,79 @@ async def twilio_voice(request: Request):
 async def twilio_gather(request: Request):
     """
     Handles speech collected from the customer.
-    Invokes the LangGraph node pipeline, logs transcripts in real-time to Supabase,
+    Invokes the LangGraph node pipeline, logs transcripts in real-time to Supabase, 
     speaks suggestions using Sarvam TTS, and keeps the call active.
     """
     from main import process_turn, CallTurnRequest, ACTIVE_CALLS
 
-    # The default response is always valid TwiML with a continuing <Gather>,
-    # so even a catastrophic failure in this handler keeps the call alive.
-    default_twiml = PlainTextResponse(
-        "<Response><Gather input='speech' method='POST'><Say>Sorry, we had a temporary technical issue. How can I help you?</Say></Gather></Response>",
-        media_type="text/xml"
-    )
-
     try:
         form_data = await request.form()
-    except Exception as e:
-        logger.error("[GATHER] Critical: failed to read form data: %s", e)
-        traceback.print_exc()
-        return default_twiml
-
-    try:
         speech_result = form_data.get("SpeechResult")
         call_sid = form_data.get("CallSid")
-
+        
         call_id_str = request.query_params.get("call_id")
         call_id = int(call_id_str) if call_id_str else (hash(call_sid) % 100000)
-
+        
         gather_url = f"{PUBLIC_BASE_URL}/twilio/gather?call_id={call_id}"
-        logger.info("[GATHER] Speech received | CallId=%s | CallSid=%s | Speech='%s'", call_id, call_sid, speech_result)
+        print(f"[Twilio /gather] CallId={call_id} | CallSid={call_sid} | Speech='{speech_result}'")
 
         response = VoiceResponse()
 
         if speech_result:
             try:
-                # 1. Process turn through LangGraph node pipeline.
-                # process_turn is SYNCHRONOUS and CPU-bound (model load, ChromaDB
-                # query, Sarvam LLM calls). Running it directly on the async
-                # event loop blocks ALL requests and routinely exceeds Twilio's
-                # 15-second webhook timeout, which hangs up the call.
-                # asyncio.to_thread moves it to a worker thread; wait_for
-                # guarantees we answer Twilio before the timeout.
-                logger.info("[AI] Starting process_turn | call_id=%s", call_id)
-                try:
-                    ai_output = await asyncio.wait_for(
-                        asyncio.to_thread(process_turn, CallTurnRequest(call_id=call_id, transcript_text=speech_result)),
-                        timeout=AI_PROCESSING_TIMEOUT_SECONDS,
-                    )
-                except asyncio.CancelledError as _ce:
-                    # In Python 3.12+ wait_for cancels the enclosing task; re-raise
-                    # so the handler does not swallow cancellation.
-                    raise
-                except asyncio.TimeoutError:
-                    logger.error("[AI] process_turn exceeded %ss timeout for call_id=%s — using fallback so the call stays alive", AI_PROCESSING_TIMEOUT_SECONDS, call_id)
-                    ai_output = None
-                except Exception as e:
-                    logger.error("[AI] process_turn raised: %s", e)
-                    traceback.print_exc()
-                    ai_output = None
-                logger.info("[AI] process_turn completed | call_id=%s", call_id)
+                # 1. Process turn through LangGraph node pipeline
+                req = CallTurnRequest(call_id=call_id, transcript_text=speech_result)
+                ai_output = process_turn(req)
+                
+                suggestion = ai_output.get("suggestion", "")
+                intent = ai_output.get("intent", "small_talk")
+                sentiment = ai_output.get("sentiment", "neutral")
+                turn_cost = ai_output.get("cost_usd", 0.0)
 
-                if ai_output is None:
-                    # AI pipeline failed or timed out — never hang up. Apologize
-                    # with a plain <Say> (no TTS dependency) and keep listening.
-                    response.say("Sorry, I am having a temporary technical issue. Please repeat your question.", voice='alice')
+                # 2. Persist turn inputs and outputs to database in real-time
+                # Store the customer speech
+                persist_transcript_turn(
+                    call_id=call_id,
+                    speaker="customer",
+                    text=speech_result,
+                    intent=intent,
+                    sentiment=sentiment,
+                    assistant_response=suggestion,
+                    cost_usd=turn_cost
+                )
+                
+                # Store the agent response
+                persist_transcript_turn(
+                    call_id=call_id,
+                    speaker="agent",
+                    text=suggestion,
+                    cost_usd=0.0
+                )
+                
+                # Accumulate cost to call record
+                update_call_cost(call_id, turn_cost)
+
+                # Reset silent count on successful speech
+                from main import ACTIVE_CALLS
+                if call_id in ACTIVE_CALLS:
+                    ACTIVE_CALLS[call_id]["silent_count"] = 0
+
+                # 3. Handle compliance flag warnings without hanging up!
+                if ai_output["compliance_flag"] or "[human_judgment_required]" in suggestion:
+                    compliance_warning = "I have noted your request. Please note that guarantees on limits require document validation. What else can I check for you?"
+                    await speak_text(response, compliance_warning)
                 else:
-                    logger.info("[AI] Output received | call_id=%s | intent=%s | sentiment=%s | cost=%s", call_id, ai_output.get("intent"), ai_output.get("sentiment"), ai_output.get("cost_usd"))
-
-                    suggestion = ai_output.get("suggestion", "")
-                    intent = ai_output.get("intent", "small_talk")
-                    sentiment = ai_output.get("sentiment", "neutral")
-                    turn_cost = ai_output.get("cost_usd", 0.0)
-
-                    # 2. Persist turn inputs and outputs to database in real-time
-                    try:
-                        logger.info("[DB] Saving customer transcript | call_id=%s", call_id)
-                        # Store the customer speech
-                        persist_transcript_turn(
-                            call_id=call_id,
-                            speaker="customer",
-                            text=speech_result,
-                            intent=intent,
-                            sentiment=sentiment,
-                            assistant_response=suggestion,
-                            cost_usd=turn_cost
-                        )
-
-                        # Store the agent response
-                        logger.info("[DB] Saving agent transcript | call_id=%s", call_id)
-                        persist_transcript_turn(
-                            call_id=call_id,
-                            speaker="agent",
-                            text=suggestion,
-                            cost_usd=0.0
-                        )
-
-                        # Accumulate cost to call record
-                        update_call_cost(call_id, turn_cost)
-                        logger.info("[DB] Cost updated | call_id=%s | add=%s", call_id, turn_cost)
-                    except Exception as e:
-                        # A DB failure must NOT terminate the call — log and continue.
-                        logger.error("[DB] Transcript persistence failed (non-fatal): %s", e)
-                        traceback.print_exc()
-
-                    # Reset silent count on successful speech
-                    from main import ACTIVE_CALLS
-                    if call_id in ACTIVE_CALLS:
-                        ACTIVE_CALLS[call_id]["silent_count"] = 0
-
-                    # 3. Handle compliance flag warnings without hanging up!
-                    if ai_output.get("compliance_flag") or "[human_judgment_required]" in suggestion:
-                        compliance_warning = "I have noted your request. Please note that guarantees on limits require document validation. What else can I check for you?"
-                        await speak_text(response, compliance_warning)
-                    else:
-                        # Speak the AI suggestion back to the caller
-                        await speak_text(response, suggestion)
-
+                    # Speak the AI suggestion back to the caller
+                    await speak_text(response, suggestion)
+                
                 # Always append gather to keep the conversation going indefinitely
                 gather = Gather(input='speech', action=gather_url, method='POST', speechTimeout='auto')
                 response.append(gather)
-
+                
             except Exception as e:
-                logger.error("[GATHER] Error processing turn: %s", e)
-                print("=" * 80)
-                print("[ERROR]")
-                print(type(e).__name__)
-                print(str(e))
-                traceback.print_exc()
-                print("=" * 80)
-                # Never depend on TTS in the fallback path — use Twilio's built-in Say
+                print("Error processing turn:", e)
                 fallback_msg = "Sorry, our AI is experiencing minor technical delays. How can I help you?"
-                response.say(fallback_msg, voice='alice')
+                await speak_text(response, fallback_msg)
                 gather = Gather(input='speech', action=gather_url, method='POST', speechTimeout='auto')
                 response.append(gather)
         else:
@@ -425,7 +333,7 @@ async def twilio_gather(request: Request):
             session = ACTIVE_CALLS.get(call_id, {})
             silent_count = session.get("silent_count", 0) + 1
             session["silent_count"] = silent_count
-            logger.info("[GATHER] Silence detected | Count=%s | call_id=%s", silent_count, call_id)
+            print(f"[Twilio /gather] Silence detected. Count={silent_count} for call_id={call_id}")
 
             if silent_count <= 2:
                 fallback_repeat = "I didn't quite catch that. Are you still there?"
@@ -438,17 +346,10 @@ async def twilio_gather(request: Request):
                 await speak_text(response, fallback_goodbye)
                 response.hangup()
 
-        logger.info("[TWILIO] Returning TwiML | call_id=%s | length=%d", call_id, len(str(response)))
         return PlainTextResponse(str(response), media_type="text/xml")
     except Exception as e:
-        logger.error("[GATHER] Critical error in /gather: %s", e)
-        print("=" * 80)
-        print("[ERROR]")
-        print(type(e).__name__)
-        print(str(e))
-        traceback.print_exc()
-        print("=" * 80)
-        return default_twiml
+        print(f"Critical error in /gather: {e}")
+        return PlainTextResponse("<Response><Say>An unexpected error occurred.</Say></Response>", media_type="text/xml")
 
 
 @router.post("/call/outbound")
@@ -489,11 +390,10 @@ async def trigger_outbound_call(payload: dict = Body(...)):
             from_=from_phone,
             url=f"{PUBLIC_BASE_URL}/twilio/voice-outbound?call_id={call_id}"
         )
-        logger.info("[Outbound Call Triggered] CallSid=%s | lead_id=%s | call_id=%s", call.sid, lead_id, call_id)
+        print(f"[Outbound Call Triggered] CallSid={call.sid} | lead_id={lead_id} | call_id={call_id}")
         return {"success": True, "call_sid": call.sid, "call_id": call_id}
     except Exception as e:
-        logger.error("[Outbound Call Error] %s", e)
-        traceback.print_exc()
+        print(f"[Outbound Call Error] {e}")
         return {"error": str(e)}
 
 
@@ -506,15 +406,15 @@ async def twilio_voice_outbound(request: Request):
     call_id_str = request.query_params.get("call_id")
     if not call_id_str:
         return PlainTextResponse("<Response><Say>Invalid call configuration.</Say></Response>", media_type="text/xml")
-
+    
     call_id = int(call_id_str)
     gather_url = f"{PUBLIC_BASE_URL}/twilio/gather?call_id={call_id}"
-
+    
     response = VoiceResponse()
-
+    
     # Generate the initial greeting text
     consent = "Welcome to FlexiPay. This call is AI-assisted and recorded for quality and compliance. How can I help you today?"
-
+    
     # Persist the initial greeting text to database
     persist_transcript_turn(call_id, "agent", consent, cost_usd=0.0)
 
@@ -522,7 +422,7 @@ async def twilio_voice_outbound(request: Request):
     gather = Gather(input='speech', action=gather_url, method='POST', speechTimeout='auto')
     await speak_text(gather, consent)
     response.append(gather)
-
+    
     # If the user remains silent, redirect to gather_url to trigger silent count retries
     response.redirect(gather_url)
     return PlainTextResponse(str(response), media_type="text/xml")
@@ -539,12 +439,12 @@ async def twilio_status(request: Request):
         call_sid = form_data.get("CallSid")
         call_status = form_data.get("CallStatus")
         call_id_str = request.query_params.get("call_id")
-
-        logger.info("[Twilio /status] CallSid=%s | Status=%s | call_id=%s", call_sid, call_status, call_id_str)
-
+        
+        print(f"[Twilio /status] CallSid={call_sid} | Status={call_status} | call_id={call_id_str}")
+        
         if call_status in ["completed", "failed", "busy", "no-answer"] and call_id_str:
             call_id = int(call_id_str)
-
+            
             # 1. Update call state to completed in database
             conn = get_db_connection()
             try:
@@ -555,28 +455,27 @@ async def twilio_status(request: Request):
                     )
                     conn.commit()
             except Exception as e:
-                logger.error("[DB Error] Status update failed: %s", e)
-                traceback.print_exc()
+                print(f"[DB Error] Status update failed: {e}")
             finally:
                 conn.close()
-
+                
             # 2. Perform compliance auditing and summaries
             from main import ACTIVE_CALLS
             if call_id in ACTIVE_CALLS:
                 session = ACTIVE_CALLS.get(call_id)
                 transcript = session.get("transcript", [])
-
+                
                 # Formulate summary
                 intents = [t.get("intent") for t in transcript if t.get("intent")]
                 if not intents:
                     summary = "Inquiry call resolved with default instructions."
                 else:
                     summary = f"Customer call resolved with intents: {', '.join(set(intents))}."
-
+                
                 # Perform post-call self check
                 from agents.self_check_agent import self_check_call
                 self_check_passed, corrections = self_check_call(transcript)
-
+                
                 # Update call analysis in DB
                 conn = get_db_connection()
                 try:
@@ -587,17 +486,15 @@ async def twilio_status(request: Request):
                         )
                         conn.commit()
                 except Exception as e:
-                    logger.error("[DB Error] Post-call updates failed: %s", e)
-                    traceback.print_exc()
+                    print(f"[DB Error] Post-call updates failed: {e}")
                 finally:
                     conn.close()
-
+                
                 # Clean session from active memory
                 ACTIVE_CALLS.pop(call_id, None)
-
+                
     except Exception as e:
-        logger.error("[Twilio /status] Error in status webhook: %s", e)
-        traceback.print_exc()
+        print(f"Error in status webhook: {e}")
     return PlainTextResponse("OK")
 
 
@@ -609,4 +506,4 @@ async def serve_audio(filename: str):
     filepath = os.path.join(AUDIO_CACHE_DIR, filename)
     if os.path.exists(filepath):
         return FileResponse(filepath, media_type="audio/mpeg")
-    return PlainTextResponse("<Error>File not found</Error>", media_type="text/xml")
+    return {"error": "File not found"}
