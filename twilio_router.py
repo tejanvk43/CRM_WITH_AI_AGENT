@@ -89,7 +89,7 @@ def get_or_create_lead_by_phone(phone: str) -> dict:
                     return lead
 
             # Create dynamic lead if not existing
-            default_email = os.environ.get("ADMIN_EMAIL", "ptejanvk@gmail.com")
+            default_email = os.environ.get("ADMIN_EMAIL")
             cur.execute(
                 "INSERT INTO leads (name, phone, email, status, \"creditScore\", \"approvedLimit\", notes) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id, name, phone, email, \"creditScore\"",
                 (f"Incoming: {phone}", phone, default_email, "lead", 700, 30000, "Auto-created from incoming Twilio call.")
@@ -651,7 +651,7 @@ async def twilio_gather(request: Request):
                 ]
                 if any(kw in speech_clean for kw in human_transfer_keywords):
                     twilio_caller_id = os.environ.get("TWILIO_PHONE_NUMBER")
-                    manager_phone = os.environ.get("MANAGER_PHONE", "+918919998149")
+                    manager_phone = os.environ.get("MANAGER_PHONE")
                     fallback_url = f"{PUBLIC_BASE_URL}/twilio/transfer-fallback?call_id={call_id}"
 
                     transfer_msg = "Certainly! I am transferring you directly to our sales manager right now. Please stay on the line."
