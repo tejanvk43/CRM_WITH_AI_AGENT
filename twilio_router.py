@@ -650,7 +650,7 @@ async def twilio_gather(request: Request):
                     "transfer", "manager", "representative", "agent", "connect", "executive", "operator", "teja"
                 ]
                 if any(kw in speech_clean for kw in human_transfer_keywords):
-                    twilio_caller_id = os.environ.get("TWILIO_PHONE_NUMBER", "+15625736985")
+                    twilio_caller_id = os.environ.get("TWILIO_PHONE_NUMBER")
                     manager_phone = os.environ.get("MANAGER_PHONE", "+918919998149")
                     fallback_url = f"{PUBLIC_BASE_URL}/twilio/transfer-fallback?call_id={call_id}"
 
