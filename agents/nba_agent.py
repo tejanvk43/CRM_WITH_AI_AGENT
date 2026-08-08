@@ -37,9 +37,11 @@ def call_reasoning_llm(system_prompt: str, user_message: str) -> str:
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message}
-            ]
+            ],
+            "max_tokens": 45,
+            "temperature": 0.2
         }
-        resp = httpx.post("https://api.sarvam.ai/v1/chat/completions", json=payload, headers=headers, timeout=10.0)
+        resp = httpx.post("https://api.sarvam.ai/v1/chat/completions", json=payload, headers=headers, timeout=5.0)
         if resp.status_code == 200:
             data = resp.json()
             choices = data.get("choices", [])
@@ -54,22 +56,27 @@ def call_reasoning_llm(system_prompt: str, user_message: str) -> str:
 
 def _fallback_reasoning_llm(user_message: str) -> str:
     msg = user_message.lower()
-    if "objection" in msg:
-        return ("Acknowledge the concern warmly. Remind the customer that FlexiPay charges "
-                "ZERO interest — the ₹199 late fee only applies after a 3-day grace period "
-                "and is waived on the first missed payment.")
-    elif "kyc_question" in msg or "document" in msg or "paperwork" in msg:
-        return ("Reassure the customer — KYC is 100% digital and takes under 10 minutes. "
-                "Offer to send a secure onboarding link via SMS right now.")
-    elif "ready_to_convert" in msg or "signup" in msg or "link" in msg:
-        return ("Great — send the SMS registration link immediately. "
-                "Remind them their pre-approved limit is reserved for 7 days.")
-    elif "product_question" in msg or "interest" in msg or "fee" in msg or "services" in msg:
-        return ("Confirm: 0% interest for 3 months, zero processing fee, no prepayment penalty. "
-                "Ask which upcoming purchase they have in mind to check the ₹3,000 minimum.")
+    if "interest" in msg or "rate" in msg or "fee" in msg or "cost" in msg or "charge" in msg:
+        return ("Great question! FlexiPay gives you 100 percent zero interest for three full months with no processing fees. "
+                "Are you planning an upcoming purchase?")
+    elif "kyc" in msg or "document" in msg or "paperwork" in msg or "aadhaar" in msg or "pan" in msg:
+        return ("Our KYC is completely digital and takes just two minutes with your Aadhaar card! "
+                "Would you like me to send you the verification link right now?")
+    elif "limit" in msg or "amount" in msg or "maximum" in msg or "eligible" in msg or "how much" in msg:
+        return ("Our credit lines range from 3,000 up to 75,000 rupees based on your profile. "
+                "How much credit were you looking to get today?")
+    elif "miss" in msg or "late" in msg or "penalty" in msg or "overdue" in msg:
+        return ("No worries at all! We offer a three-day grace period, and the late fee is completely waived on your first missed payment. "
+                "Does that help?")
+    elif "link" in msg or "sms" in msg or "apply" in msg or "register" in msg or "signup" in msg:
+        return ("Awesome! I can text the instant 1-click onboarding link straight to your phone right now. "
+                "Shall I go ahead and send it?")
+    elif "hello" in msg or "hi" in msg or "hey" in msg:
+        return ("Hello! I'm Priya from FlexiPay. I'd love to help you with our zero percent interest credit line today. "
+                "What can I answer for you?")
     else:
-        return ("Build rapport — ask if they have a specific purchase in mind "
-                "that qualifies for the ₹3,000 minimum transaction threshold.")
+        return ("I'd be delighted to help with that! FlexiPay offers instant zero percent interest credit lines for Indian shoppers. "
+                "What purchase do you have in mind today?")
 
 
 def nba_node(state: dict) -> dict:
@@ -95,23 +102,21 @@ def nba_node(state: dict) -> dict:
     facts_block = "\n".join(f"- {f}" for f in facts if f) or "No specific facts retrieved."
 
     system_prompt = (
-        "You are Priya, a friendly and professional phone sales representative for FlexiPay, "
-        "a zero-interest pay-in-3 installments product for Indian consumers.\n"
-        "You are speaking DIRECTLY to a customer on a live phone call.\n\n"
-        "Rules:\n"
-        "- Respond DIRECTLY to the customer's question in 1-2 short, warm, conversational sentences.\n"
-        "- Use the product facts provided — do NOT invent information.\n"
-        "- Keep total response under 30 words — this will be read aloud over a phone call.\n"
-        "- Use simple English. Do NOT use markdown, bullet points, or formatting.\n"
-        "- Do NOT start with 'I' or 'As a'. Start with the answer directly or a warm acknowledgment.\n"
-        "- Core facts: 0% interest for 3 months, Rs 199 late fee waived on first miss, "
-        "minimum Rs 3000 transaction, KYC is fully digital and takes under 10 minutes."
+        "You are Priya, a warm, enthusiastic, and helpful sales advisor for FlexiPay.\n"
+        "You are speaking live on the phone with a customer.\n\n"
+        "Rules for speaking naturally like a real human:\n"
+        "- Sound warm, engaging, and friendly—never robotic or clunky.\n"
+        "- Always start with a natural conversational opener (e.g. 'Sure thing!', 'Great question!', 'I would love to help you with that!').\n"
+        "- Give a clear, helpful 1-sentence explanation without clumsy jargon.\n"
+        "- End with an interactive question or polite offer to keep the conversation flowing smoothly.\n"
+        "- Keep total response under 25 words.\n"
+        "- Never spell out words or use weird symbols. Say 'pay', 'EMI', 'KYC', and 'rupees' naturally.\n"
+        "- Core facts: zero percent interest for 3 months, minimum purchase rupees 3000, 100 percent digital KYC in 2 minutes with Aadhaar, first missed payment fee is waived."
     )
     user_msg = (
-        f"Customer said: {customer_text}\n\n"
-        f"Grounded product facts:\n{facts_block}\n\n"
-        f"Customer intent: {intent}\n\n"
-        "Reply to the customer directly in 1-2 short sentences:"
+        f"Customer asked: {customer_text}\n"
+        f"Knowledge: {facts_block}\n"
+        "Reply as Priya with natural warmth and an interactive closing question:"
     )
 
     suggestion = call_reasoning_llm(system_prompt, user_msg)

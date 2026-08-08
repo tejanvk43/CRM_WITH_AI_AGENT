@@ -6,24 +6,43 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import DashboardLayout from "./components/DashboardLayout";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import Home from "./pages/Home";
+import Demo from "./pages/Demo";
 import KnowledgeBase from "./pages/KnowledgeBase";
 import Architecture from "./pages/Architecture";
 import CostLog from "./pages/CostLog";
 
 function Router() {
-  // make sure to consider if you need authentication for certain routes
   return (
-    <DashboardLayout>
-      <Switch>
-        <Route path={"/"} component={Home} />
-        <Route path={"/knowledge"} component={KnowledgeBase} />
-        <Route path={"/architecture"} component={Architecture} />
-        <Route path={"/cost-log"} component={CostLog} />
-        <Route path={"/404"} component={NotFound} />
-        {/* Final fallback route */}
-        <Route component={NotFound} />
-      </Switch>
-    </DashboardLayout>
+    <Switch>
+      <Route path={"/"} component={Home} />
+      <Route path={"/crm"}>
+        <DashboardLayout>
+          <Demo />
+        </DashboardLayout>
+      </Route>
+      <Route path={"/demo"}>
+        <DashboardLayout>
+          <Demo />
+        </DashboardLayout>
+      </Route>
+      <Route path={"/knowledge"}>
+        <DashboardLayout>
+          <KnowledgeBase />
+        </DashboardLayout>
+      </Route>
+      <Route path={"/architecture"}>
+        <DashboardLayout>
+          <Architecture />
+        </DashboardLayout>
+      </Route>
+      <Route path={"/cost-log"}>
+        <DashboardLayout>
+          <CostLog />
+        </DashboardLayout>
+      </Route>
+      <Route path={"/404"} component={NotFound} />
+      <Route component={NotFound} />
+    </Switch>
   );
 }
 

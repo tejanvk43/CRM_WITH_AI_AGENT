@@ -147,8 +147,25 @@ workflow.add_edge("compliance", END)
 
 graph = workflow.compile()
 
-# ---------------------------------------------------------------- FastAPI Definition
 app = FastAPI(title="FlexiPay Inside Sales AI Voice Co-Pilot")
+
+@app.on_event("startup")
+async def startup_warmup():
+    """Pre-warm the embedding model, vector collection, and Sarvam LLM pool so live calls never suffer initial load latency."""
+    import asyncio
+    print("[Warmup] Pre-warming SentenceTransformer, ChromaDB, and Sarvam LLM connection...")
+    try:
+        from agents.rag_agent import _get_collection, rag_node
+        col = await asyncio.to_thread(_get_collection)
+        await asyncio.to_thread(col.query, query_texts=["warmup query"], n_results=1)
+        
+        # Warmup NBA agent LLM connection
+        from agents.nba_agent import call_reasoning_llm
+        await asyncio.to_thread(call_reasoning_llm, "Warmup prompt", "Hello")
+        
+        print("[Warmup] All models and connections are warmed up and ready in RAM (1-2s target active)!")
+    except Exception as e:
+        print(f"[Warmup Warning] Failed to pre-warm pipeline: {e}")
 
 from twilio_router import router as twilio_router
 app.include_router(twilio_router, prefix="/twilio", tags=["Twilio Voice"])

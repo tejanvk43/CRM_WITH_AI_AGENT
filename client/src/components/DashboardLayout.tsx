@@ -21,14 +21,15 @@ import {
 } from "@/components/ui/sidebar";
 import { startLogin } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
-import { Bot, Database, FileCode2, LogOut, PanelLeft, Wallet } from "lucide-react";
+import { Bot, Database, FileCode2, LogOut, PanelLeft, Wallet, Home as HomeIcon } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { Button } from "./ui/button";
 
 const menuItems = [
-  { icon: Bot, label: "Demo", path: "/" },
+  { icon: HomeIcon, label: "Home Landing", path: "/" },
+  { icon: Bot, label: "Enterprise CRM", path: "/crm" },
   { icon: Database, label: "Knowledge Base", path: "/knowledge" },
   { icon: FileCode2, label: "Architecture", path: "/architecture" },
   { icon: Wallet, label: "Cost Log", path: "/cost-log" },

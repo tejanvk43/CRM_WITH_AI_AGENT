@@ -1,29 +1,20 @@
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { trpc } from "@/lib/trpc";
 import { useRealtimeCall, useRealtimeLeads } from "@/hooks/useRealtime";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
-  Activity,
-  ArrowRight,
-  Bot,
   Search,
   Sparkles,
   Loader2,
-  MessageCircle,
   AlertTriangle,
-  CheckCircle2,
-  FileText,
   PhoneCall,
   UserPlus,
-  RefreshCw,
   Clock,
   ShieldAlert,
   BarChart3,
@@ -34,18 +25,27 @@ import {
   CheckCircle,
   Filter,
   User,
-  ExternalLink
+  ExternalLink,
+  Volume2,
+  Mic,
+  MicOff,
+  Play,
+  Pause,
+  ShieldCheck,
+  CreditCard,
+  Check,
+  X,
+  Send,
+  Phone,
+  Radio,
+  MessageSquare,
+  Headphones,
+  Settings,
+  Users
 } from "lucide-react";
 import { toast } from "sonner";
 
-type Intent =
-  | "product_question"
-  | "objection"
-  | "kyc_question"
-  | "ready_to_convert"
-  | "small_talk";
-
-type Sentiment = "positive" | "neutral" | "negative";
+type UserRole = "admin" | "underwriter" | "sales" | "compliance";
 
 interface Lead {
   id: number;
@@ -61,6 +61,7 @@ interface Lead {
 }
 
 interface TranscriptTurn {
+  id?: number;
   speaker: "customer" | "agent";
   text: string;
   intent?: string;
@@ -68,56 +69,80 @@ interface TranscriptTurn {
   answer?: string;
   nbaSuggestion?: string;
   complianceFlag?: boolean;
+  audioUrl?: string | null;
+  costUsd?: string;
 }
 
-const INTENT_META: Record<Intent, { label: string; icon: React.ElementType; tone: string }> = {
-  product_question: { label: "Product Q&A", icon: FileText, tone: "text-slate-650 border-slate-200 bg-slate-50" },
-  objection: { label: "Objection", icon: AlertTriangle, tone: "text-amber-700 border-amber-200 bg-amber-50" },
-  kyc_question: { label: "KYC Onboarding", icon: FileText, tone: "text-indigo-700 border-indigo-200 bg-indigo-50" },
-  ready_to_convert: { label: "Deal Ready", icon: CheckCircle2, tone: "text-emerald-700 border-emerald-200 bg-emerald-50" },
-  small_talk: { label: "Greeting / Talk", icon: MessageCircle, tone: "text-slate-500 border-slate-200 bg-slate-50" },
+const ROLE_CONFIG: Record<UserRole, { label: string; badge: string; icon: React.ElementType; description: string }> = {
+  sales: {
+    label: "Sales Manager / Rep",
+    badge: "bg-emerald-100 text-emerald-800 border-emerald-200",
+    icon: Users,
+    description: "Human-to-Human Sales Calling: Sales Manager and Customer speak directly with 0 AI voice."
+  },
+  underwriter: {
+    label: "Credit Underwriter",
+    badge: "bg-blue-100 text-blue-800 border-blue-200",
+    icon: CreditCard,
+    description: "Review and approve digital KYC applications, verify Aadhaar/PAN, and set credit limits."
+  },
+  compliance: {
+    label: "Compliance Officer",
+    badge: "bg-amber-100 text-amber-800 border-amber-200",
+    icon: ShieldAlert,
+    description: "Audit voice recordings, check factual grounding, and inspect RBI lending compliance."
+  },
+  admin: {
+    label: "Super Admin",
+    badge: "bg-purple-100 text-purple-800 border-purple-200",
+    icon: ShieldCheck,
+    description: "Full administrative access across sales, underwriting, compliance, and cost analytics."
+  },
 };
 
 const STATUS_META = {
   lead: { label: "Prospect", tone: "bg-slate-100 text-slate-700 border-slate-200" },
   objection: { label: "Objections Raised", tone: "bg-amber-100/60 text-amber-800 border-amber-200" },
-  kyc_pending: { label: "KYC Active", tone: "bg-indigo-100/60 text-indigo-800 border-indigo-200" },
-  converted: { label: "Converted", tone: "bg-emerald-100/60 text-emerald-800 border-emerald-200" },
+  kyc_pending: { label: "KYC Pending", tone: "bg-indigo-100/60 text-indigo-800 border-indigo-200" },
+  converted: { label: "Converted / Approved", tone: "bg-emerald-100/60 text-emerald-800 border-emerald-200" },
   lost: { label: "Lost", tone: "bg-rose-100/60 text-rose-800 border-rose-200" },
 };
 
-const LEAD_MOCK_PROMPTS: Record<number, Array<{ label: string; text: string }>> = {
-  1: [
-    { label: "Interest & Processing fees?", text: "Is this pay-in-3 product really zero interest? Are there any hidden fees or processing charges?" },
-    { label: "Security & CIBIL check?", text: "How secure is my data? Also, will applying for this hit my CIBIL credit score?" },
-    { label: "Proceed and buy", text: "Okay, sounds good to me. I want to proceed and buy. Send me the registration link." },
-  ],
-  2: [
-    { label: "Zero interest skepticism", text: "Nothing is ever free. I don't trust zero interest loans. What's the catch?" },
-    { label: "Hesitation about Aadhaar/PAN upload", text: "I don't feel safe uploading my Aadhaar and PAN cards on a public portal. It feels like a scam." },
-    { label: "What are the late fees?", text: "What happens if I miss a payment? How much are the late fees?" },
-  ],
-  3: [
-    { label: "KYC documents needed?", text: "What documents do I need to prepare to pass the KYC onboarding?" },
-    { label: "Guarantee my approval? (Sensitive)", text: "This is fine, but can you guarantee my loan approval? I don't want to upload documents for nothing." },
-    { label: "Accept and register", text: "Great, I'll do the verification. Send me the link now." },
-  ],
-};
-
 export default function Demo() {
+  const [currentRole, setCurrentRole] = useState<UserRole>("sales");
+
+  // Sales Manager Phone Configuration (Saved locally)
+  const [managerPhone, setManagerPhone] = useState(() => {
+    return localStorage.getItem("sales_manager_phone") || "+918919998149";
+  });
+  const [showManagerConfig, setShowManagerConfig] = useState(false);
+
+  const handleSaveManagerPhone = (phone: string) => {
+    setManagerPhone(phone);
+    localStorage.setItem("sales_manager_phone", phone);
+    toast.success(`Sales Manager phone updated to ${phone}`);
+    setShowManagerConfig(false);
+  };
+
+  // Data Queries
   const leadsQuery = trpc.copilot.getLeads.useQuery(undefined, { refetchInterval: 3000 });
   const callsQuery = trpc.copilot.getCalls.useQuery(undefined, { refetchInterval: 5000 });
+  const kycQuery = trpc.copilot.getKycApplications.useQuery(undefined, { refetchInterval: 3000 });
+  const costLog = trpc.copilot.costLog.useQuery(undefined, { refetchInterval: 5000 });
   
+  // Mutations
   const startCallMutation = trpc.copilot.startCall.useMutation();
   const processTurnMutation = trpc.copilot.processCallTurn.useMutation();
   const endCallMutation = trpc.copilot.endCall.useMutation();
   const resetCrmMutation = trpc.copilot.resetCrm.useMutation();
   const createLeadMutation = trpc.copilot.createLead.useMutation();
-  const costLog = trpc.copilot.costLog.useQuery(undefined, { refetchInterval: 5000 });
+  const reviewKycMutation = trpc.copilot.reviewKycApplication.useMutation();
   const utils = trpc.useUtils();
 
+  // Tab State
   const [activeTab, setActiveTab] = useState("leads");
 
+  // Call & Dialer State
   const [activeCallId, setActiveCallId] = useState<number | null>(null);
   const [activeLead, setActiveLead] = useState<Lead | null>(null);
   const [customUtterance, setCustomUtterance] = useState("");
@@ -131,20 +156,43 @@ export default function Demo() {
     sentiment?: string;
   } | null>(null);
 
+  // Softphone & Browser Microphone State
+  const [isMicActive, setIsMicActive] = useState(false);
+  const [isSendingKycSms, setIsSendingKycSms] = useState(false);
+  const recognitionRef = useRef<any>(null);
+
+  // Quick Direct Dial Modal State
+  const [showDirectDial, setShowDirectDial] = useState(false);
+  const [directDialCustomerPhone, setDirectDialCustomerPhone] = useState("");
+  const [directDialName, setDirectDialName] = useState("");
+
+  // Filters & Search
   const [leadSearch, setLeadSearch] = useState("");
   const [creditFilter, setCreditFilter] = useState<"all" | "high" | "low">("all");
+  const [kycStatusFilter, setKycStatusFilter] = useState<string>("all");
 
+  // Historical Call Audits & Audio Replay
   const [selectedHistoricalCall, setSelectedHistoricalCall] = useState<any>(null);
   const [historicalTranscript, setHistoricalTranscript] = useState<any[]>([]);
   const [loadingHistoricalTranscript, setLoadingHistoricalTranscript] = useState(false);
+  const [playingTurnIndex, setPlayingTurnIndex] = useState<number | null>(null);
+  const [isPlayingFullSession, setIsPlayingFullSession] = useState(false);
+  const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
 
+  // KYC Review Modal State
+  const [selectedKycApp, setSelectedKycApp] = useState<any>(null);
+  const [customApprovalLimit, setCustomApprovalLimit] = useState<number>(50000);
+  const [rejectionReason, setRejectionReason] = useState<string>("Incomplete document verification");
+
+  // New Lead Modal State
   const [showAddLead, setShowAddLead] = useState(false);
   const [newName, setNewName] = useState("");
   const [newPhone, setNewPhone] = useState("");
   const [newEmail, setNewEmail] = useState("");
   const [newCredit, setNewCredit] = useState(720);
 
-  const { realtimeTurns, isConnected: rtConnected } = useRealtimeCall(activeCallId);
+  // Realtime Subscriptions
+  const { realtimeTurns } = useRealtimeCall(activeCallId);
 
   useEffect(() => {
     if (realtimeTurns.length === 0) return;
@@ -160,6 +208,7 @@ export default function Demo() {
           intent: latest.intent ?? undefined,
           sentiment: latest.sentiment ?? undefined,
           answer: latest.assistantResponse ?? undefined,
+          audioUrl: (latest as any).audioUrl ?? undefined,
         },
       ];
     });
@@ -168,12 +217,14 @@ export default function Demo() {
   const handleLeadUpdate = useCallback((updatedLead: any) => {
     utils.copilot.getLeads.invalidate();
     utils.copilot.getCalls.invalidate();
+    utils.copilot.getKycApplications.invalidate();
     if (activeLead && updatedLead.id === activeLead.id) {
       setActiveLead((prev) => (prev ? { ...prev, ...updatedLead } : prev));
     }
   }, [activeLead, utils]);
   const { isConnected: leadsRtConnected } = useRealtimeLeads(handleLeadUpdate);
 
+  // Filtered Lists
   const filteredLeads = useMemo(() => {
     return (leadsQuery.data ?? []).filter((lead: Lead) => {
       const matchesSearch =
@@ -187,34 +238,259 @@ export default function Demo() {
     });
   }, [leadsQuery.data, leadSearch, creditFilter]);
 
+  const filteredKycApps = useMemo(() => {
+    return (kycQuery.data ?? []).filter((app: any) => {
+      if (kycStatusFilter !== "all" && app.status !== kycStatusFilter) return false;
+      return true;
+    });
+  }, [kycQuery.data, kycStatusFilter]);
+
+  const pendingKycCount = useMemo(() => {
+    return (kycQuery.data ?? []).filter((app: any) => app.status === "pending").length;
+  }, [kycQuery.data]);
+
   const analytics = useMemo(() => {
     const totalLeads = leadsQuery.data?.length ?? 0;
     const converted = leadsQuery.data?.filter(l => l.status === "converted").length ?? 0;
     const conversionRate = totalLeads > 0 ? (converted / totalLeads) * 100 : 0;
     const totalCalls = callsQuery.data?.length ?? 0;
     const cost = costLog.data?.total_usd ?? 0;
-    const complianceScore = 100;
+    const approvedLimitsTotal = (kycQuery.data ?? [])
+      .filter((app: any) => app.status === "approved")
+      .reduce((sum: number, app: any) => sum + (app.approvedLimit || app.requestedLimit || 50000), 0);
 
     return {
       totalLeads,
       conversionRate,
       totalCalls,
       cost,
-      complianceScore,
+      pendingKyc: pendingKycCount,
+      approvedLimitsTotal,
+      complianceScore: 100,
     };
-  }, [leadsQuery.data, callsQuery.data, costLog.data]);
+  }, [leadsQuery.data, callsQuery.data, costLog.data, kycQuery.data, pendingKycCount]);
 
+  // Audio Playback Handler for Specific Turn
+  const handlePlayTurnAudio = async (text: string, existingAudioUrl?: string | null, index?: number) => {
+    if (playingTurnIndex === index) {
+      if (audioPlayerRef.current) {
+        audioPlayerRef.current.pause();
+      }
+      setPlayingTurnIndex(null);
+      return;
+    }
+
+    setPlayingTurnIndex(index ?? -1);
+    toast.info("🔊 Playing audio speech...");
+
+    if (existingAudioUrl) {
+      if (audioPlayerRef.current) {
+        audioPlayerRef.current.src = existingAudioUrl;
+        audioPlayerRef.current.play().catch(() => playSpeechSynthesisFallback(text));
+        return;
+      }
+    }
+
+    try {
+      const res = await fetch("http://localhost:8000/twilio/tts/synthesize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text })
+      });
+      const data = await res.json();
+      if (data.audioUrl && audioPlayerRef.current) {
+        audioPlayerRef.current.src = data.audioUrl;
+        await audioPlayerRef.current.play();
+        return;
+      }
+    } catch (e) {
+      console.warn("TTS synthesis error:", e);
+    }
+
+    // Web Speech API fallback
+    playSpeechSynthesisFallback(text);
+  };
+
+  const playSpeechSynthesisFallback = (text: string) => {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.onend = () => setPlayingTurnIndex(null);
+      utterance.onerror = () => setPlayingTurnIndex(null);
+      window.speechSynthesis.speak(utterance);
+    } else {
+      setPlayingTurnIndex(null);
+    }
+  };
+
+  // Play Full Conversation Dialogue Sequentially
+  const handlePlayFullConversation = async () => {
+    if (isPlayingFullSession) {
+      if (audioPlayerRef.current) audioPlayerRef.current.pause();
+      if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+      setIsPlayingFullSession(false);
+      setPlayingTurnIndex(null);
+      return;
+    }
+
+    if (!historicalTranscript.length) {
+      toast.error("No transcript turns to play.");
+      return;
+    }
+
+    setIsPlayingFullSession(true);
+    toast.success("▶ Playing full conversation audio sequence!");
+
+    for (let i = 0; i < historicalTranscript.length; i++) {
+      const turn = historicalTranscript[i];
+      setPlayingTurnIndex(i);
+      await new Promise<void>((resolve) => {
+        if ('speechSynthesis' in window) {
+          const prefix = turn.speaker === "agent" ? "Sales Representative: " : "Customer: ";
+          const utterance = new SpeechSynthesisUtterance(prefix + turn.text);
+          utterance.onend = () => resolve();
+          utterance.onerror = () => resolve();
+          window.speechSynthesis.speak(utterance);
+        } else {
+          setTimeout(resolve, 3000);
+        }
+      });
+    }
+
+    setIsPlayingFullSession(false);
+    setPlayingTurnIndex(null);
+    toast.info("Full conversation playback finished.");
+  };
+
+  // Browser Softphone Microphone (Web Speech Recognition for Human Agent)
+  const toggleAgentMicrophone = () => {
+    if (isMicActive) {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+      setIsMicActive(false);
+      toast.info("Agent microphone muted.");
+      return;
+    }
+
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      toast.error("Speech Recognition is not supported in this browser. Please use Chrome or Edge.");
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.lang = "en-IN";
+
+    recognition.onstart = () => {
+      setIsMicActive(true);
+      toast.success("🎙️ Agent Headset Active: You can speak with the customer now.");
+    };
+
+    recognition.onresult = (event: any) => {
+      const lastResultIndex = event.results.length - 1;
+      const transcriptText = event.results[lastResultIndex][0].transcript.trim();
+      if (transcriptText) {
+        handleAgentSpeak(transcriptText);
+      }
+    };
+
+    recognition.onerror = (event: any) => {
+      console.warn("Speech recognition error:", event.error);
+      setIsMicActive(false);
+    };
+
+    recognition.onend = () => {
+      setIsMicActive(false);
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
+  };
+
+  // Send KYC SMS to Customer while on Call
+  const handleSendKycSmsToCustomer = async () => {
+    if (!activeLead?.phone) {
+      toast.error("No phone number available for active lead.");
+      return;
+    }
+    setIsSendingKycSms(true);
+    try {
+      const res = await fetch("http://localhost:8000/twilio/sms/kyc-link", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: activeLead.phone })
+      });
+      const data = await res.json();
+      if (data.success) {
+        toast.success(`📱 Digital KYC link texted to ${activeLead.phone}!`);
+      } else {
+        toast.error("Failed to send KYC SMS.");
+      }
+    } catch (e) {
+      toast.error("Error dispatching KYC link SMS.");
+    } finally {
+      setIsSendingKycSms(false);
+    }
+  };
+
+  // Actions: Initiate Direct 2-Way Human Call (Manager ↔ Customer)
   const handleStartCall = async (lead: Lead) => {
     try {
-      const { callId } = await startCallMutation.mutateAsync({ leadId: lead.id });
+      const { callId } = await startCallMutation.mutateAsync({
+        leadId: lead.id,
+        agentPhone: managerPhone,
+      });
       setActiveCallId(callId);
       setActiveLead(lead);
       setTranscript([]);
       setLastCopilotAdvice(null);
       setActiveTab("dialer");
-      toast.success(`Calling ${lead.name}...`);
+      toast.success(`📞 Direct Human Bridge initiated! Twilio is connecting Manager (${managerPhone}) ↔ Customer (${lead.phone})! Zero AI speech.`);
     } catch (err) {
-      toast.error("Failed to start voice call");
+      toast.error("Failed to initiate call session");
+    }
+  };
+
+  // Direct Dial Physical Phone via Twilio Outbound
+  const handleDirectDialOutbound = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!directDialCustomerPhone.trim()) {
+      toast.error("Please enter a customer destination phone number.");
+      return;
+    }
+
+    const targetName = directDialName.trim() || `Customer (${directDialCustomerPhone})`;
+    try {
+      await createLeadMutation.mutateAsync({
+        name: targetName,
+        phone: directDialCustomerPhone.trim(),
+        creditScore: 720,
+        notes: "Initiated from CRM human bridge dialer.",
+      });
+
+      const updatedLeads = await utils.copilot.getLeads.fetch();
+      const created = updatedLeads.find((l: any) => l.phone.includes(directDialCustomerPhone.trim().slice(-10))) || updatedLeads[0];
+
+      if (created) {
+        const { callId } = await startCallMutation.mutateAsync({
+          leadId: created.id,
+          agentPhone: managerPhone,
+        });
+        setActiveCallId(callId);
+        setActiveLead(created);
+        setTranscript([]);
+        setLastCopilotAdvice(null);
+        setActiveTab("dialer");
+        setShowDirectDial(false);
+        setDirectDialCustomerPhone("");
+        setDirectDialName("");
+        toast.success(`📞 Calling Manager (${managerPhone}) to bridge with Customer (${directDialCustomerPhone}) with ZERO AI voice!`);
+      }
+    } catch (err) {
+      toast.error("Failed to bridge outbound call.");
     }
   };
 
@@ -255,19 +531,13 @@ export default function Demo() {
 
       setCustomUtterance("");
       utils.copilot.costLog.invalidate();
-
-      if (result.answer && !result.complianceFlag) {
-        setTimeout(() => {
-          handleAgentSpeak(result.answer);
-        }, 1500);
-      }
     } catch (err) {
-      toast.error("Failed to process conversation step");
+      toast.error("Failed to process conversation turn");
     }
   };
 
   const handleAgentSpeak = async (text: string) => {
-    if (!activeCallId) return;
+    if (!activeCallId || !text.trim()) return;
     setTranscript((prev) => [...prev, { speaker: "agent", text }]);
     try {
       await processTurnMutation.mutateAsync({
@@ -282,30 +552,35 @@ export default function Demo() {
 
   const handleEndCall = async (overrideStatus?: "lead" | "objection" | "kyc_pending" | "converted" | "lost") => {
     if (!activeCallId || !activeLead) return;
+    if (isMicActive && recognitionRef.current) {
+      recognitionRef.current.stop();
+      setIsMicActive(false);
+    }
     try {
       const outcome = await endCallMutation.mutateAsync({
         callId: activeCallId,
         overrideStatus,
       });
-      toast.success(`Call finalized. Onboarding state: ${outcome.status.toUpperCase()}`);
+      toast.success(`Call completed. Lead status: ${outcome.status.toUpperCase()}`);
       setActiveCallId(null);
       setActiveLead(null);
       utils.copilot.getLeads.invalidate();
       utils.copilot.getCalls.invalidate();
       setActiveTab("leads");
     } catch (err) {
-      toast.error("Failed to save final call results");
+      toast.error("Failed to finalize call");
     }
   };
 
   const handleResetCrm = async () => {
-    if (confirm("Are you sure you want to wipe the CRM database? All prospect leads and call transcripts will be permanently deleted.")) {
+    if (confirm("Are you sure you want to reset the CRM database? All records will be cleared.")) {
       await resetCrmMutation.mutateAsync();
       toast.success("CRM database reset.");
       setActiveCallId(null);
       setActiveLead(null);
       utils.copilot.getLeads.invalidate();
       utils.copilot.getCalls.invalidate();
+      utils.copilot.getKycApplications.invalidate();
     }
   };
 
@@ -314,7 +589,7 @@ export default function Demo() {
     setLoadingHistoricalTranscript(true);
     try {
       const result = await utils.client.copilot.getCallTranscript.query({ callId: call.id });
-      setHistoricalTranscript(result);
+      setHistoricalTranscript(result || []);
     } catch (err) {
       toast.error("Failed to fetch historical call transcript");
     } finally {
@@ -322,10 +597,44 @@ export default function Demo() {
     }
   };
 
+  const handleApproveKyc = async (appId: number, limit: number) => {
+    try {
+      await reviewKycMutation.mutateAsync({
+        applicationId: appId,
+        action: "approve",
+        approvedLimit: limit,
+        reviewedBy: ROLE_CONFIG[currentRole].label,
+      });
+      toast.success(`KYC Approved! Credit line of ₹${limit.toLocaleString('en-IN')} granted.`);
+      setSelectedKycApp(null);
+      utils.copilot.getKycApplications.invalidate();
+      utils.copilot.getLeads.invalidate();
+    } catch (err) {
+      toast.error("Failed to approve KYC application");
+    }
+  };
+
+  const handleRejectKyc = async (appId: number, reason: string) => {
+    try {
+      await reviewKycMutation.mutateAsync({
+        applicationId: appId,
+        action: "reject",
+        rejectionReason: reason,
+        reviewedBy: ROLE_CONFIG[currentRole].label,
+      });
+      toast.info("KYC application rejected.");
+      setSelectedKycApp(null);
+      utils.copilot.getKycApplications.invalidate();
+      utils.copilot.getLeads.invalidate();
+    } catch (err) {
+      toast.error("Failed to update KYC application");
+    }
+  };
+
   const handleCreateLead = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newName || !newPhone) {
-      toast.error("Name and Phone number are required fields.");
+      toast.error("Name and Phone number are required.");
       return;
     }
     try {
@@ -334,74 +643,228 @@ export default function Demo() {
         phone: newPhone,
         email: newEmail,
         creditScore: newCredit,
-        notes: "Manually created prospect.",
+        notes: "Manually added prospect.",
       });
-      toast.success("New lead created successfully.");
+      toast.success("New prospect created successfully.");
       setShowAddLead(false);
       setNewName("");
       setNewPhone("");
       setNewEmail("");
       utils.copilot.getLeads.invalidate();
     } catch (err) {
-      toast.error("Failed to write prospect to database");
+      toast.error("Failed to create prospect");
     }
   };
 
   return (
     <div className="flex flex-col gap-6 p-6 max-w-7xl mx-auto w-full min-h-screen text-slate-800 bg-[#fbfcfd] antialiased">
-      
-      {/* HEADER SECTION - NO NEON GLOWS, MINIMALIST DEEP INDIGO */}
-      <div className="flex justify-between items-center flex-wrap gap-4 border-b border-slate-200 pb-5">
-        <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
-              FlexiPay Inside Sales Dashboard
+      {/* Hidden Global Audio Tag for Replay */}
+      <audio
+        ref={audioPlayerRef}
+        onEnded={() => setPlayingTurnIndex(null)}
+        onError={() => setPlayingTurnIndex(null)}
+        className="hidden"
+      />
+
+      {/* HEADER SECTION & ENTERPRISE RBAC SELECTOR */}
+      <div className="flex justify-between items-start flex-wrap gap-4 border-b border-slate-200 pb-5">
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-3 flex-wrap">
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
+              <span className="h-7 w-7 bg-slate-900 text-white rounded-lg flex items-center justify-center text-xs font-bold shadow-xs">FP</span>
+              FlexiPay Enterprise CRM &amp; Sales Bridge
             </h1>
             <div className={`flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-medium border ${leadsRtConnected ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-slate-100 text-slate-600 border-slate-200"}`}>
-              <span className={`w-1.5 h-1.5 rounded-full ${leadsRtConnected ? "bg-emerald-550 animate-pulse" : "bg-slate-400"}`} />
-              {leadsRtConnected ? "Supabase Connected" : "Local Fallback"}
+              <span className={`w-1.5 h-1.5 rounded-full ${leadsRtConnected ? "bg-emerald-500 animate-pulse" : "bg-slate-400"}`} />
+              {leadsRtConnected ? "Supabase Realtime Live" : "PostgreSQL Connected"}
             </div>
             {activeCallId && (
-              <div className="flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-medium border bg-blue-50 text-blue-700 border-blue-200">
-                <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-ping" />
-                Active Session
+              <div className="flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-medium border bg-emerald-50 text-emerald-800 border-emerald-200 animate-pulse">
+                <Users className="h-3.5 w-3.5 text-emerald-600" />
+                Human Call Active: Manager ↔ Customer
               </div>
             )}
           </div>
-          <p className="text-xs text-slate-500 mt-1">
-            Auditable agent workspace for FlexiPay pay-in-3 EMI compliance &amp; Next-Best-Action coaching.
+          <p className="text-xs text-slate-500">
+            100% Direct Human-to-Human Telephone Bridge (Zero AI Voice), Real-Time AI Copilot screen coaching &amp; digital KYC underwriting.
           </p>
         </div>
         
-        <div className="flex gap-2 items-center">
-          <Button variant="outline" size="sm" onClick={handleResetCrm} className="border-slate-200 hover:bg-slate-50 text-slate-600 text-xs">
-            <Trash2 className="h-3.5 w-3.5 mr-1.5" />
-            Clear CRM Database
+        {/* ROLE SWITCHER & ACTIONS */}
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* RBAC Role Selector Dropdown */}
+          <div className="flex items-center gap-2 bg-white border border-slate-200 p-1.5 rounded-lg shadow-2xs">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider pl-1.5">Role:</span>
+            <div className="flex gap-1">
+              {(["sales", "underwriter", "compliance", "admin"] as UserRole[]).map((roleKey) => {
+                const isSelected = currentRole === roleKey;
+                const config = ROLE_CONFIG[roleKey];
+                const IconComponent = config.icon;
+                return (
+                  <button
+                    key={roleKey}
+                    onClick={() => {
+                      setCurrentRole(roleKey);
+                      if (roleKey === "underwriter") setActiveTab("kyc");
+                      if (roleKey === "sales") setActiveTab("leads");
+                      if (roleKey === "compliance") setActiveTab("history");
+                      toast.info(`Switched active view to ${config.label}`);
+                    }}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-all ${
+                      isSelected
+                        ? "bg-slate-900 text-white shadow-xs"
+                        : "text-slate-600 hover:bg-slate-100"
+                    }`}
+                  >
+                    <IconComponent className="h-3 w-3" />
+                    <span>{config.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <Button
+            size="sm"
+            onClick={() => setShowManagerConfig(!showManagerConfig)}
+            variant="outline"
+            className="border-slate-300 text-slate-700 hover:bg-slate-50 text-xs h-8 gap-1.5"
+          >
+            <Settings className="h-3.5 w-3.5" />
+            Manager Phone: <strong className="text-slate-900 font-mono">{managerPhone}</strong>
           </Button>
-          <Button size="sm" onClick={() => setShowAddLead(true)} className="bg-slate-900 hover:bg-slate-800 text-white text-xs">
-            <Plus className="h-3.5 w-3.5 mr-1.5" />
-            Create Lead
+
+          <Button
+            size="sm"
+            onClick={() => setShowDirectDial(!showDirectDial)}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs h-8 gap-1.5 shadow-xs font-semibold"
+          >
+            <Phone className="h-3.5 w-3.5" />
+            Bridge Call to Customer
           </Button>
+
+          <Button variant="outline" size="sm" onClick={handleResetCrm} className="border-slate-200 hover:bg-slate-50 text-slate-600 text-xs h-8">
+            <Trash2 className="h-3.5 w-3.5 mr-1" />
+            Reset CRM
+          </Button>
+
+          <Button size="sm" onClick={() => setShowAddLead(true)} className="bg-slate-900 hover:bg-slate-800 text-white text-xs h-8">
+            <Plus className="h-3.5 w-3.5 mr-1" />
+            New Prospect
+          </Button>
+        </div>
+      </div>
+
+      {/* SALES MANAGER PHONE CONFIG DRAWER */}
+      {showManagerConfig && (
+        <Card className="border-slate-300 bg-slate-50 p-4 shadow-sm animate-in fade-in">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="flex-1 min-w-[240px]">
+              <label className="text-[10px] font-bold text-slate-700 uppercase tracking-wider block mb-1">Your Sales Manager Phone Number (Twilio calls you to connect with customer)</label>
+              <Input
+                defaultValue={managerPhone}
+                id="manager-phone-input"
+                placeholder="+91 89199 98149"
+                className="bg-white border-slate-300 text-xs h-9 font-mono"
+              />
+            </div>
+            <Button
+              type="button"
+              onClick={() => {
+                const val = (document.getElementById("manager-phone-input") as HTMLInputElement)?.value;
+                if (val) handleSaveManagerPhone(val);
+              }}
+              className="bg-slate-900 hover:bg-slate-800 text-white text-xs h-9 px-4 font-semibold"
+            >
+              Save Manager Phone
+            </Button>
+            <Button type="button" variant="ghost" onClick={() => setShowManagerConfig(false)} className="text-xs h-9 text-slate-500">
+              Cancel
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      {/* DIRECT HUMAN BRIDGE MODAL */}
+      {showDirectDial && (
+        <Card className="border-emerald-200 bg-emerald-50/40 p-4 shadow-sm animate-in fade-in">
+          <form onSubmit={handleDirectDialOutbound} className="flex flex-wrap items-end gap-3">
+            <div className="flex-1 min-w-[200px]">
+              <label className="text-[10px] font-bold text-emerald-800 uppercase tracking-wider block mb-1">Customer Destination Phone</label>
+              <Input
+                value={directDialCustomerPhone}
+                onChange={(e) => setDirectDialCustomerPhone(e.target.value)}
+                placeholder="+91 98765 43210"
+                className="bg-white border-emerald-300 text-xs h-9 font-mono"
+              />
+            </div>
+            <div className="flex-1 min-w-[200px]">
+              <label className="text-[10px] font-bold text-emerald-800 uppercase tracking-wider block mb-1">Customer Name (Optional)</label>
+              <Input
+                value={directDialName}
+                onChange={(e) => setDirectDialName(e.target.value)}
+                placeholder="Full Name"
+                className="bg-white border-emerald-300 text-xs h-9"
+              />
+            </div>
+            <div className="flex-1 min-w-[200px]">
+              <label className="text-[10px] font-bold text-emerald-800 uppercase tracking-wider block mb-1">Your Manager Phone (Rings First)</label>
+              <Input
+                value={managerPhone}
+                onChange={(e) => setManagerPhone(e.target.value)}
+                className="bg-white border-emerald-300 text-xs h-9 font-mono"
+              />
+            </div>
+            <Button type="submit" className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs h-9 px-4 gap-1.5 shadow-xs font-semibold">
+              <PhoneCall className="h-3.5 w-3.5" />
+              Call &amp; Bridge Phones (0 AI Voice)
+            </Button>
+            <Button type="button" variant="ghost" onClick={() => setShowDirectDial(false)} className="text-xs h-9 text-slate-500">
+              Cancel
+            </Button>
+          </form>
+        </Card>
+      )}
+
+      {/* ROLE BANNER */}
+      <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-2.5">
+          <Badge className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${ROLE_CONFIG[currentRole].badge}`}>
+            {ROLE_CONFIG[currentRole].label} Mode
+          </Badge>
+          <span className="text-xs text-slate-600 font-normal">
+            {ROLE_CONFIG[currentRole].description}
+          </span>
+        </div>
+        <div className="flex items-center gap-4 text-xs font-medium text-slate-600">
+          <span className="flex items-center gap-1.5">
+            <span className="h-2 w-2 rounded-full bg-emerald-500"></span>
+            Total Granted Credit: <strong className="text-slate-900">₹{analytics.approvedLimitsTotal.toLocaleString('en-IN')}</strong>
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="h-2 w-2 rounded-full bg-amber-500"></span>
+            Pending KYC: <strong className="text-amber-700">{analytics.pendingKyc}</strong>
+          </span>
         </div>
       </div>
 
       {/* NEW PROSPECT FORM */}
       {showAddLead && (
-        <Card className="border-slate-200 bg-white shadow-sm duration-150 animate-in fade-in duration-100">
+        <Card className="border-slate-200 bg-white shadow-sm duration-150 animate-in fade-in">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-semibold text-slate-800 flex items-center gap-2">
               <UserPlus className="h-4 w-4" />
               Register New Lead
             </CardTitle>
             <CardDescription className="text-xs text-slate-500">
-              Submit basic CIBIL and contact details to seed a new prospect.
+              Submit contact &amp; CIBIL details to initialize a prospective customer.
             </CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleCreateLead} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
               <div>
-                <label className="text-[10px] font-semibold text-slate-500 block mb-1">NAME</label>
-                <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Full name" className="bg-white border-slate-200 text-xs h-9 focus:ring-slate-400" />
+                <label className="text-[10px] font-semibold text-slate-500 block mb-1">FULL NAME</label>
+                <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Full Name" className="bg-white border-slate-200 text-xs h-9 focus:ring-slate-400" />
               </div>
               <div>
                 <label className="text-[10px] font-semibold text-slate-500 block mb-1">PHONE NUMBER</label>
@@ -409,7 +872,7 @@ export default function Demo() {
               </div>
               <div>
                 <label className="text-[10px] font-semibold text-slate-500 block mb-1">EMAIL ADDRESS</label>
-                <Input value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="email@address.com" className="bg-white border-slate-200 text-xs h-9 focus:ring-slate-400" />
+                <Input value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="email@company.com" className="bg-white border-slate-200 text-xs h-9 focus:ring-slate-400" />
               </div>
               <div>
                 <label className="text-[10px] font-semibold text-slate-500 block mb-1">CIBIL SCORE (300-900)</label>
@@ -424,47 +887,63 @@ export default function Demo() {
         </Card>
       )}
 
-      {/* TABS CONTAINER */}
+      {/* MAIN NAVIGATION TABS CONTAINER */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="flex bg-slate-100/80 border border-slate-200/60 p-1 rounded-md w-full md:w-[500px]">
-          <TabsTrigger value="leads" className="text-xs font-medium py-1.5 px-3 flex-1 data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm rounded transition-all">
+        <TabsList className="flex bg-slate-100/90 border border-slate-200/80 p-1 rounded-lg w-full md:w-auto self-start">
+          <TabsTrigger value="leads" className="text-xs font-medium py-1.5 px-3 flex-1 data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-xs rounded-md transition-all">
             <User className="h-3.5 w-3.5 mr-1.5 text-slate-500" />
-            CRM Lead Board
+            CRM Lead Funnel
           </TabsTrigger>
-          <TabsTrigger value="dialer" className="text-xs font-medium py-1.5 px-3 flex-1 data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm rounded transition-all">
-            <PhoneCall className="h-3.5 w-3.5 mr-1.5 text-slate-500" />
-            Active Dialer
+
+          <TabsTrigger value="dialer" className="text-xs font-medium py-1.5 px-3 flex-1 data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-xs rounded-md transition-all relative">
+            <Users className="h-3.5 w-3.5 mr-1.5 text-slate-500" />
+            Human Softphone &amp; Copilot
+            {activeCallId && (
+              <span className="ml-1.5 h-2 w-2 rounded-full bg-emerald-500 animate-ping inline-block"></span>
+            )}
           </TabsTrigger>
-          <TabsTrigger value="history" className="text-xs font-medium py-1.5 px-3 flex-1 data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm rounded transition-all">
-            <Clock className="h-3.5 w-3.5 mr-1.5 text-slate-500" />
-            Call History
+
+          <TabsTrigger value="kyc" className="text-xs font-medium py-1.5 px-3 flex-1 data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-xs rounded-md transition-all relative">
+            <CreditCard className="h-3.5 w-3.5 mr-1.5 text-slate-500" />
+            KYC &amp; Underwriting
+            {pendingKycCount > 0 && (
+              <span className="ml-1.5 px-1.5 py-0.2 bg-amber-500 text-white rounded-full text-[10px] font-bold">
+                {pendingKycCount}
+              </span>
+            )}
           </TabsTrigger>
-          <TabsTrigger value="analytics" className="text-xs font-medium py-1.5 px-3 flex-1 data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm rounded transition-all">
+
+          <TabsTrigger value="history" className="text-xs font-medium py-1.5 px-3 flex-1 data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-xs rounded-md transition-all">
+            <Volume2 className="h-3.5 w-3.5 mr-1.5 text-slate-500" />
+            Call Audio &amp; Audits
+          </TabsTrigger>
+
+          <TabsTrigger value="analytics" className="text-xs font-medium py-1.5 px-3 flex-1 data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-xs rounded-md transition-all">
             <BarChart3 className="h-3.5 w-3.5 mr-1.5 text-slate-500" />
-            Analytics
+            Analytics &amp; Cost
           </TabsTrigger>
         </TabsList>
 
-        {/* ── TAB 1: MINIMALIST CRM LEAD BOARD ── */}
+        {/* ── TAB 1: CRM LEAD BOARD ── */}
         <TabsContent value="leads" className="mt-4">
           <div className="flex gap-4 items-center justify-between mb-4 flex-wrap">
             <div className="flex gap-3 items-center flex-1 max-w-md">
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                <Input value={leadSearch} onChange={(e) => setLeadSearch(e.target.value)} placeholder="Search leads by name or email..." className="pl-9 bg-white border-slate-200 text-xs focus:ring-slate-300" />
+                <Input value={leadSearch} onChange={(e) => setLeadSearch(e.target.value)} placeholder="Search leads by name or phone..." className="pl-9 bg-white border-slate-200 text-xs focus:ring-slate-300" />
               </div>
               <div className="flex items-center gap-1.5 bg-white px-3 py-1.5 border border-slate-200 rounded text-xs text-slate-500">
                 <Filter className="h-3.5 w-3.5 text-slate-400" />
-                <span>CIBIL Score:</span>
+                <span>CIBIL:</span>
                 <select value={creditFilter} onChange={(e) => setCreditFilter(e.target.value as any)} className="bg-transparent font-medium text-slate-800 outline-none cursor-pointer text-xs">
-                  <option value="all">All Scores</option>
+                  <option value="all">All</option>
                   <option value="high">High (&gt;= 720)</option>
                   <option value="low">Low (&lt; 720)</option>
                 </select>
               </div>
             </div>
             <div className="text-xs text-slate-500">
-              Total {filteredLeads.length} leads in funnel
+              Showing {filteredLeads.length} prospects
             </div>
           </div>
 
@@ -474,7 +953,7 @@ export default function Demo() {
               const meta = STATUS_META[status];
 
               return (
-                <div key={status} className="bg-slate-50 border border-slate-200/80 rounded p-3 flex flex-col gap-3 min-h-[450px]">
+                <div key={status} className="bg-slate-50 border border-slate-200/80 rounded-xl p-3 flex flex-col gap-3 min-h-[450px]">
                   <div className="flex justify-between items-center pb-2 border-b border-slate-200">
                     <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">{meta.label}</span>
                     <span className="text-[10px] font-bold text-slate-500 bg-white border border-slate-200 rounded-full px-2 py-0.5">
@@ -484,31 +963,25 @@ export default function Demo() {
 
                   <div className="flex flex-col gap-3 overflow-y-auto max-h-[500px]">
                     {statusLeads.length === 0 ? (
-                      <div className="text-center text-[10px] text-slate-400 py-12 italic">Empty</div>
+                      <div className="text-center text-[10px] text-slate-400 py-12 italic">No leads in stage</div>
                     ) : (
                       statusLeads.map((lead) => (
-                        <div key={lead.id} className="bg-white border border-slate-200 p-3.5 rounded shadow-xs hover:border-slate-350 transition-all flex flex-col gap-2.5">
+                        <div key={lead.id} className="bg-white border border-slate-200 p-3.5 rounded-lg shadow-2xs hover:border-slate-350 transition-all flex flex-col gap-2.5">
                           <div className="space-y-1">
-                            <h4 className="font-medium text-xs text-slate-800">{lead.name}</h4>
-                            <p className="text-[10px] text-slate-500">{lead.phone}</p>
+                            <h4 className="font-semibold text-xs text-slate-800">{lead.name}</h4>
+                            <p className="text-[11px] text-slate-500 font-mono">{lead.phone}</p>
                           </div>
 
-                          <div className="flex justify-between items-center pt-1">
+                          <div className="flex justify-between items-center pt-1 border-t border-slate-100">
                             <span className="text-[10px] text-slate-500">
                               CIBIL: <span className={`font-semibold ${lead.creditScore >= 720 ? "text-emerald-600" : "text-amber-600"}`}>{lead.creditScore}</span>
                             </span>
                             
-                            <Button size="sm" onClick={() => handleStartCall(lead)} className="bg-slate-900 hover:bg-slate-800 text-white rounded text-[10px] px-2.5 py-1 flex items-center gap-1 h-6">
-                              <PhoneCall className="h-2.5 w-2.5" />
-                              Dial
+                            <Button size="sm" onClick={() => handleStartCall(lead)} className="bg-slate-900 hover:bg-slate-800 text-white text-[11px] h-7 px-3 gap-1">
+                              <Phone className="h-3 w-3" />
+                              Bridge Call
                             </Button>
                           </div>
-                          
-                          {lead.approvedLimit && (
-                            <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-100 text-[9px] font-semibold py-0.5 mt-0.5 self-start">
-                              Limit: ₹{lead.approvedLimit.toLocaleString()}
-                            </Badge>
-                          )}
                         </div>
                       ))
                     )}
@@ -519,205 +992,207 @@ export default function Demo() {
           </div>
         </TabsContent>
 
-        {/* ── TAB 2: ACTIVE DIALER & AI SALES CO-PILOT ── */}
+        {/* ── TAB 2: HUMAN-TO-HUMAN SOFTPHONE & REAL-TIME AI COPILOT ── */}
         <TabsContent value="dialer" className="mt-4">
           {!activeCallId ? (
-            <Card className="border-slate-200 bg-white p-16 text-center flex flex-col items-center justify-center max-w-xl mx-auto gap-4 mt-6 shadow-sm">
-              <div className="h-14 w-14 rounded-full bg-slate-50 flex items-center justify-center border border-slate-200">
-                <PhoneCall className="h-6 w-6 text-slate-600" />
-              </div>
-              <div>
-                <CardTitle className="text-lg font-semibold text-slate-800">No Active Call Session</CardTitle>
-                <CardDescription className="text-xs text-slate-500 mt-1.5 max-w-sm mx-auto">
-                  Go to the **CRM Lead Board** tab, find your target prospect, and click **Dial** to initialize a live compliance-checked call session.
-                </CardDescription>
+            <Card className="border-slate-200 bg-white p-12 text-center shadow-2xs">
+              <Users className="h-10 w-10 text-slate-400 mx-auto mb-3" />
+              <h3 className="text-base font-semibold text-slate-800">100% Direct Human-to-Human Telephone Calling</h3>
+              <p className="text-xs text-slate-500 max-w-md mx-auto mt-1.5 mb-6">
+                Twilio rings your Sales Manager phone ({managerPhone}) and connects you directly with the customer on their phone. Zero AI speech on the call.
+              </p>
+              
+              <div className="flex justify-center gap-3 flex-wrap">
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    const firstLead = (leadsQuery.data ?? [])[0];
+                    if (firstLead) {
+                      handleStartCall(firstLead);
+                    } else {
+                      setShowDirectDial(true);
+                    }
+                  }}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs h-9 px-5 font-semibold gap-2 shadow-xs"
+                >
+                  <PhoneCall className="h-4 w-4" />
+                  Connect Manager ↔ Customer Call
+                </Button>
+
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setShowDirectDial(true)}
+                  className="border-slate-300 text-slate-700 hover:bg-slate-50 text-xs h-9 px-4 gap-1.5"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Dial Any Phone Number
+                </Button>
               </div>
             </Card>
           ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-              
-              {/* Profile card & Simulation Utterances */}
-              <div className="flex flex-col gap-6">
-                <Card className="border-slate-200 bg-white shadow-xs">
-                  <CardHeader className="pb-4">
-                    <CardTitle className="text-xs font-semibold uppercase text-slate-500 tracking-wider">Prospect Information</CardTitle>
-                    <CardDescription className="text-[11px] text-slate-500">Live call profile from database record.</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-3.5">
-                    <div className="flex justify-between border-b border-slate-100 pb-2 text-xs">
-                      <span className="text-slate-500">Prospect Name</span>
-                      <span className="font-medium text-slate-800">{activeLead?.name}</span>
-                    </div>
-                    <div className="flex justify-between border-b border-slate-100 pb-2 text-xs">
-                      <span className="text-slate-500">Phone Number</span>
-                      <span className="font-medium text-slate-800">{activeLead?.phone}</span>
-                    </div>
-                    <div className="flex justify-between border-b border-slate-100 pb-2 text-xs">
-                      <span className="text-slate-500">Email Address</span>
-                      <span className="font-medium text-slate-800">{activeLead?.email ?? "N/A"}</span>
-                    </div>
-                    <div className="flex justify-between border-b border-slate-100 pb-2 text-xs">
-                      <span className="text-slate-500">CIBIL Rating</span>
-                      <span className={`font-semibold ${activeLead && activeLead.creditScore >= 720 ? "text-emerald-600" : "text-amber-600"}`}>
-                        {activeLead?.creditScore}
-                      </span>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {/* Softphone Live Call & Conversation Transcript */}
+              <div className="md:col-span-2 space-y-4">
+                <Card className="border-slate-200 bg-white shadow-2xs">
+                  <CardHeader className="pb-3 border-b border-slate-100 flex flex-row items-center justify-between flex-wrap gap-2">
+                    <div>
+                      <CardTitle className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+                        <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-ping" />
+                        Human Live Call: Manager ({managerPhone}) ↔ Customer ({activeLead?.phone})
+                      </CardTitle>
+                      <CardDescription className="text-xs text-slate-500">
+                        Zero AI speech • CIBIL: {activeLead?.creditScore} • Stage: {activeLead?.status?.toUpperCase()}
+                      </CardDescription>
                     </div>
                     
-                    {/* Simulated Waveform (Flat Gray minimalism) */}
-                    <div className="flex flex-col gap-2 pt-2 items-center bg-slate-50 p-3 rounded border border-slate-200">
-                      <div className="flex gap-1 h-6 items-center">
-                        <span className="w-0.5 bg-slate-400 h-1.5 rounded animate-pulse" />
-                        <span className="w-0.5 bg-slate-400 h-4 rounded animate-pulse" />
-                        <span className="w-0.5 bg-slate-400 h-3 rounded animate-pulse" />
-                        <span className="w-0.5 bg-slate-400 h-5 rounded animate-pulse" />
-                        <span className="w-0.5 bg-slate-400 h-2 rounded animate-pulse" />
-                        <span className="w-0.5 bg-slate-400 h-4.5 rounded animate-pulse" />
-                        <span className="w-0.5 bg-slate-400 h-1 rounded animate-pulse" />
-                      </div>
-                      <span className="text-[9px] uppercase font-semibold text-slate-450 tracking-wider">Twilio Webhook Connected</span>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2 pt-2">
-                      <Button onClick={() => handleEndCall("converted")} className="bg-slate-900 hover:bg-slate-800 text-white text-[11px] py-1.5 h-auto font-medium">
-                        Convert Lead
+                    <div className="flex items-center gap-2">
+                      {/* One-Click Send KYC SMS */}
+                      <Button
+                        size="sm"
+                        onClick={handleSendKycSmsToCustomer}
+                        disabled={isSendingKycSms}
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs h-7.5 px-3 gap-1 font-medium shadow-xs"
+                      >
+                        <MessageSquare className="h-3 w-3" />
+                        {isSendingKycSms ? "Sending SMS..." : "Text KYC Link"}
                       </Button>
-                      <Button onClick={() => handleEndCall()} variant="outline" className="border-rose-200 text-rose-600 hover:bg-rose-50 text-[11px] py-1.5 h-auto">
+
+                      {/* Agent Microphone Toggle */}
+                      <Button
+                        size="sm"
+                        onClick={toggleAgentMicrophone}
+                        className={`text-xs h-7.5 px-3 gap-1.5 font-semibold transition-all ${
+                          isMicActive
+                            ? "bg-red-600 hover:bg-red-700 text-white animate-pulse"
+                            : "bg-emerald-600 hover:bg-emerald-700 text-white"
+                        }`}
+                      >
+                        {isMicActive ? <Mic className="h-3.5 w-3.5 animate-bounce" /> : <MicOff className="h-3.5 w-3.5" />}
+                        {isMicActive ? "Mic Active (Speaking)" : "Unmute Mic"}
+                      </Button>
+
+                      <Button size="sm" variant="destructive" onClick={() => handleEndCall("converted")} className="text-xs h-7.5 px-3">
                         Hang Up Call
                       </Button>
                     </div>
-                  </CardContent>
-                </Card>
-
-                {/* Simulated Customer utterances */}
-                <Card className="border-slate-200 bg-white shadow-xs">
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-xs font-semibold uppercase text-slate-500 tracking-wider">Simulated Buyer Prompts</CardTitle>
-                    <CardDescription className="text-[10px] text-slate-500">Inject customer statements directly to test responses.</CardDescription>
                   </CardHeader>
-                  <CardContent className="flex flex-col gap-2">
-                    {activeLead && LEAD_MOCK_PROMPTS[activeLead.id]?.map((prompt, idx) => (
-                      <Button key={idx} variant="outline" onClick={() => handleCustomerUtterance(prompt.text)} className="justify-start text-[11px] text-slate-600 border-slate-200 hover:bg-slate-50 py-2 h-auto text-left whitespace-normal font-normal">
-                        <ArrowRight className="h-3 w-3 mr-2 text-slate-450 shrink-0" />
-                        {prompt.label}
-                      </Button>
-                    ))}
-                    
-                    <div className="pt-2 border-t border-slate-100 mt-2">
-                      <label className="text-[9px] font-bold text-slate-550 block mb-1">OR ENTER MANUAL CLIENT UTTERANCE</label>
-                      <div className="flex gap-2">
-                        <Input value={customUtterance} onChange={(e) => setCustomUtterance(e.target.value)} placeholder="Say something..." className="bg-white border-slate-200 text-xs h-8 focus:ring-slate-300" />
-                        <Button size="sm" onClick={() => handleCustomerUtterance(customUtterance)} className="bg-slate-900 hover:bg-slate-800 text-white text-xs h-8 px-3">Send</Button>
-                      </div>
+                  <CardContent className="p-4 space-y-4">
+                    {/* Live Conversation Transcript */}
+                    <div className="flex justify-between items-center text-[10px] font-bold uppercase text-slate-400 tracking-wider">
+                      <span>Live Call Audio Transcript</span>
+                      <span className="text-emerald-600 font-semibold flex items-center gap-1">
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500"></span> 100% Human to Human
+                      </span>
                     </div>
-                  </CardContent>
-                </Card>
-              </div>
 
-              {/* Live Transcript and Co-pilot panel */}
-              <div className="lg:col-span-2 flex flex-col gap-6">
-                <Card className="border-slate-200 bg-white shadow-xs flex-1 flex flex-col min-h-[500px]">
-                  <CardHeader className="pb-3 border-b border-slate-100">
-                    <CardTitle className="text-xs font-semibold uppercase text-slate-500 tracking-wider flex items-center justify-between">
-                      <span>Live Call Transcript</span>
-                      <span className="text-[10px] text-slate-400 font-normal">Real-Time Sync</span>
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="p-0 flex-1 flex flex-col justify-between">
-                    <ScrollArea className="h-[360px] p-5">
-                      <div className="space-y-5">
+                    <ScrollArea className="h-[280px] pr-4">
+                      <div className="space-y-3">
                         {transcript.length === 0 ? (
-                          <div className="text-center text-slate-400 text-xs py-16 italic">
-                            Line connected. Awaiting first customer trigger statement...
+                          <div className="text-center text-xs text-slate-400 py-12 italic">
+                            Live phone bridge active between you and {activeLead?.name}. Speak naturally on your phone.
                           </div>
                         ) : (
-                          transcript.map((turn, index) => (
-                            <div key={index} className={`flex flex-col gap-1.5 ${turn.speaker === "agent" ? "items-end" : "items-start"}`}>
-                              <span className="text-[9px] font-semibold text-slate-400 uppercase">
-                                {turn.speaker === "agent" ? "You (Agent)" : "Customer"}
-                              </span>
-
-                              <div className={`p-3 rounded text-xs leading-relaxed max-w-[85%] ${turn.speaker === "agent" ? "bg-slate-100 text-slate-800 border border-slate-200" : "bg-white border border-slate-200 text-slate-800"}`}>
-                                {turn.text}
+                          transcript.map((turn, i) => (
+                            <div key={i} className={`p-3 rounded-lg text-xs leading-relaxed ${
+                              turn.speaker === "agent"
+                                ? "bg-slate-50 border border-slate-200/80 text-slate-800 ml-6"
+                                : "bg-blue-50/60 border border-blue-100 text-blue-950 mr-6"
+                            }`}>
+                              <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-wider mb-1 text-slate-400">
+                                <span className={turn.speaker === "agent" ? "text-slate-800 font-bold" : "text-blue-700 font-bold"}>
+                                  {turn.speaker === "agent" ? "Sales Manager (You)" : `${activeLead?.name} (Customer)`}
+                                </span>
+                                <button
+                                  onClick={() => handlePlayTurnAudio(turn.text, turn.audioUrl, i)}
+                                  className="flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-800 bg-blue-50 px-2 py-0.5 rounded transition-all"
+                                >
+                                  {playingTurnIndex === i ? (
+                                    <>
+                                      <Pause className="h-3 w-3 text-blue-700 animate-pulse" />
+                                      <span>Pause Audio</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Play className="h-3 w-3 text-blue-700" />
+                                      <span>Listen to Speech</span>
+                                    </>
+                                  )}
+                                </button>
                               </div>
-
-                              {turn.speaker === "customer" && turn.intent && (
-                                <div className="flex flex-wrap gap-2 items-center mt-0.5">
-                                  <Badge variant="outline" className={`text-[9px] border-slate-200 text-slate-600 font-medium ${INTENT_META[turn.intent as Intent]?.tone || "text-slate-550"}`}>
-                                    {INTENT_META[turn.intent as Intent]?.label || turn.intent}
-                                  </Badge>
-                                  <Badge variant="outline" className="text-[9px] border-slate-200 text-slate-550 font-normal">
-                                    {turn.sentiment} mood
-                                  </Badge>
-                                </div>
-                              )}
+                              <p>{turn.text}</p>
                             </div>
                           ))
                         )}
                       </div>
                     </ScrollArea>
 
-                    {/* AI Sales Co-Pilot Coaching Panel (Minimalist White/Indigo theme) */}
-                    <div className="border-t border-slate-150 bg-slate-50/50 p-5 rounded-b">
-                      <div className="flex items-center justify-between mb-3">
-                        <span className="text-xs font-semibold text-slate-700 flex items-center gap-1.5 uppercase tracking-wider">
-                          <Bot className="h-4 w-4 text-slate-650" />
-                          AI Sales Coach
-                        </span>
-                        {lastCopilotAdvice?.complianceFlag && (
-                          <Badge className="bg-rose-50 text-rose-700 border border-rose-200 font-semibold text-[9px] uppercase">
-                            Compliance Alert
-                          </Badge>
-                        )}
-                      </div>
-
-                      {!lastCopilotAdvice ? (
-                        <div className="text-xs text-slate-400 italic p-3 bg-white border border-slate-200 rounded">
-                          Awaiting customer response to generate compliance-checked sales suggestion...
-                        </div>
-                      ) : (
-                        <div className="space-y-3.5">
-                          {lastCopilotAdvice.complianceFlag ? (
-                            <div className="bg-rose-50 border border-rose-200 text-rose-800 p-4 rounded text-xs leading-relaxed flex items-start gap-3">
-                              <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
-                              <div className="space-y-1">
-                                <p className="font-semibold text-rose-900">Regulatory Compliance Exception</p>
-                                <p className="text-rose-700 text-xs">
-                                  Prospect asked for a loan guarantee. Under RBI guidelines, guaranteeing approvals is prohibited. Advise them to proceed with document review.
-                                </p>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="space-y-3">
-                              
-                              {/* Next best action box */}
-                              <div className="bg-indigo-50/50 border border-indigo-150 p-4 rounded text-xs flex gap-3 items-start">
-                                <Sparkles className="h-4.5 w-4.5 text-indigo-650 shrink-0 mt-0.5" />
-                                <div className="space-y-1.5 flex-1">
-                                  <span className="text-[9px] font-bold text-indigo-650 uppercase tracking-widest block">NEXT-BEST-ACTION ADVICE</span>
-                                  <p className="font-medium text-slate-800 leading-relaxed text-xs">{lastCopilotAdvice.nbaSuggestion}</p>
-                                  {lastCopilotAdvice.answer && (
-                                    <Button size="sm" onClick={() => handleAgentSpeak(lastCopilotAdvice.answer || "")} className="bg-slate-900 hover:bg-slate-800 text-white mt-2 h-7 text-xs font-normal">
-                                      Use Suggested Statement
-                                    </Button>
-                                  )}
-                                </div>
-                              </div>
-
-                              {/* RAG Product Facts */}
-                              {lastCopilotAdvice.answer && (
-                                <div className="bg-white border border-slate-200 p-4 rounded text-xs flex gap-3">
-                                  <FileText className="h-4.5 w-4.5 text-slate-500 shrink-0 mt-0.5" />
-                                  <div className="space-y-1">
-                                    <span className="text-[9px] font-bold text-slate-550 uppercase tracking-widest block">GROUNDED PRODUCT TERMS</span>
-                                    <p className="text-slate-600 leading-relaxed">{lastCopilotAdvice.answer}</p>
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      )}
+                    {/* Manual Customer Utterance Simulator or Note Logger */}
+                    <div className="pt-2 border-t border-slate-100 flex gap-2">
+                      <Input
+                        value={customUtterance}
+                        onChange={(e) => setCustomUtterance(e.target.value)}
+                        placeholder="Log customer note or question for AI copilot advice..."
+                        onKeyDown={(e) => { if (e.key === "Enter" && customUtterance) handleCustomerUtterance(customUtterance); }}
+                        className="text-xs bg-slate-50 border-slate-200"
+                      />
+                      <Button size="sm" onClick={() => customUtterance && handleCustomerUtterance(customUtterance)} className="bg-slate-900 hover:bg-slate-800 text-white text-xs h-9 px-3">
+                        <Send className="h-3.5 w-3.5" />
+                      </Button>
                     </div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* Real-time AI Copilot Coach (For the Human Manager) */}
+              <div className="space-y-4">
+                <Card className="border-slate-200 bg-white shadow-2xs">
+                  <CardHeader className="pb-3 border-b border-slate-100">
+                    <CardTitle className="text-xs font-bold uppercase text-slate-500 tracking-wider flex items-center gap-1.5">
+                      <Sparkles className="h-3.5 w-3.5 text-amber-500" />
+                      AI Copilot Live Screen Coach
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-4 space-y-4 text-xs">
+                    {lastCopilotAdvice ? (
+                      <div className="space-y-3">
+                        <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg space-y-1.5">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 block">
+                            💡 Suggested Pitch / Next Best Action:
+                          </span>
+                          <p className="text-emerald-950 font-medium leading-relaxed">
+                            {lastCopilotAdvice.nbaSuggestion || lastCopilotAdvice.answer}
+                          </p>
+                        </div>
+
+                        {lastCopilotAdvice.complianceFlag && (
+                          <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg space-y-1">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-rose-800 flex items-center gap-1">
+                              <AlertTriangle className="h-3 w-3" /> Compliance Risk Warning
+                            </span>
+                            <p className="text-rose-900 text-[11px]">
+                              Do not promise guaranteed sanction without KYC verification.
+                            </p>
+                          </div>
+                        )}
+
+                        <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-1">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
+                            Grounded Product Knowledge:
+                          </span>
+                          <p className="text-slate-700 text-[11px] leading-relaxed">
+                            {lastCopilotAdvice.answer || "FlexiPay 0% interest pay-in-3 credit line with ₹3,000–₹75,000 limits."}
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-center py-6 text-slate-400 space-y-2">
+                        <Sparkles className="h-5 w-5 mx-auto text-slate-300" />
+                        <p className="text-[11px] italic">
+                          As you speak with the customer, the AI Copilot on your screen will provide live answers, product facts, and objection rebuttals.
+                        </p>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               </div>
@@ -725,134 +1200,397 @@ export default function Demo() {
           )}
         </TabsContent>
 
-        {/* ── TAB 3: MINIMALIST CALL HISTORY ── */}
-        <TabsContent value="history" className="mt-4">
-          <Card className="border-slate-200 bg-white shadow-xs">
-            <CardHeader className="pb-4">
-              <CardTitle className="text-xs font-semibold uppercase text-slate-500 tracking-wider flex items-center gap-2">
-                <Clock className="h-4 w-4 text-slate-550" />
-                Session Call Log
-              </CardTitle>
-              <CardDescription className="text-xs text-slate-500">
-                Log of completed inside sales phone calls with automated compliance self-check states.
-              </CardDescription>
-            </CardHeader>
+        {/* ── TAB 3: KYC & CREDIT UNDERWRITING QUEUE ── */}
+        <TabsContent value="kyc" className="mt-4 space-y-4">
+          <div className="flex justify-between items-center flex-wrap gap-3">
+            <div>
+              <h3 className="text-base font-semibold text-slate-900">Digital KYC &amp; Credit Line Underwriting</h3>
+              <p className="text-xs text-slate-500">Review verified Aadhaar &amp; PAN submissions, check monthly income, and grant approved limits.</p>
+            </div>
+            
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 bg-white px-3 py-1.5 border border-slate-200 rounded-lg text-xs">
+                <span className="text-slate-400 font-medium">Filter Status:</span>
+                <select value={kycStatusFilter} onChange={(e) => setKycStatusFilter(e.target.value)} className="bg-transparent font-semibold text-slate-800 outline-none cursor-pointer">
+                  <option value="all">All Applications</option>
+                  <option value="pending">Pending Review</option>
+                  <option value="approved">Approved</option>
+                  <option value="rejected">Rejected</option>
+                </select>
+              </div>
+
+              <a href="/twilio/kyc/onboarding" target="_blank" rel="noreferrer" className="flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-200">
+                <ExternalLink className="h-3.5 w-3.5" />
+                Customer Mobile Portal
+              </a>
+            </div>
+          </div>
+
+          <Card className="border-slate-200 bg-white shadow-2xs">
             <CardContent className="p-0">
               <Table>
-                <TableHeader className="bg-slate-50 border-slate-250">
-                  <TableRow className="border-slate-250 text-[10px] font-semibold text-slate-500 uppercase">
-                    <TableHead className="w-20">ID</TableHead>
-                    <TableHead>LEAD NAME</TableHead>
-                    <TableHead>CALL DATE</TableHead>
-                    <TableHead>SENTIMENT</TableHead>
-                    <TableHead>COMPLIANCE</TableHead>
-                    <TableHead>CALL SUMMARY</TableHead>
-                    <TableHead className="text-right">DETAILS</TableHead>
+                <TableHeader className="bg-slate-50/80">
+                  <TableRow>
+                    <TableHead className="text-[10px] font-bold uppercase text-slate-500">ID / Applicant</TableHead>
+                    <TableHead className="text-[10px] font-bold uppercase text-slate-500">Phone &amp; OTP</TableHead>
+                    <TableHead className="text-[10px] font-bold uppercase text-slate-500">Aadhaar &amp; PAN</TableHead>
+                    <TableHead className="text-[10px] font-bold uppercase text-slate-500">Income / Employment</TableHead>
+                    <TableHead className="text-[10px] font-bold uppercase text-slate-500">Requested Limit</TableHead>
+                    <TableHead className="text-[10px] font-bold uppercase text-slate-500">Status</TableHead>
+                    <TableHead className="text-[10px] font-bold uppercase text-slate-500 text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {(callsQuery.data ?? []).length === 0 ? (
+                  {filteredKycApps.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center text-slate-450 text-xs py-12 italic">
-                        No previous calls found in the log.
+                      <TableCell colSpan={7} className="text-center py-12 text-slate-400 text-xs italic">
+                        No KYC applications found. Submissions from the mobile portal will appear here automatically.
                       </TableCell>
                     </TableRow>
                   ) : (
-                    (callsQuery.data ?? []).map((call: any) => {
-                      const sentiment = call.overallSentiment ?? "neutral";
-                      return (
-                        <TableRow key={call.id} className="border-slate-200 hover:bg-slate-50/50 text-xs transition-colors">
-                          <TableCell className="font-mono text-slate-500">#{call.id}</TableCell>
-                          <TableCell className="font-semibold text-slate-800">{call.leadName}</TableCell>
-                          <TableCell className="text-slate-500">{new Date(call.createdAt).toLocaleString()}</TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className={`text-[9px] border-slate-200 ${sentiment === "positive" ? "text-emerald-700 bg-emerald-50" : sentiment === "negative" ? "text-rose-700 bg-rose-50" : "text-slate-650 bg-slate-50"}`}>
-                              {sentiment}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <Badge className="bg-emerald-50 text-emerald-750 border border-emerald-200 text-[9px] font-medium">
-                              Approved
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-slate-600 max-w-[280px] truncate">{call.summary ?? "Active call..."}</TableCell>
-                          <TableCell className="text-right">
-                            <Button size="sm" onClick={() => handleViewHistoricalCall(call)} className="bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 text-[10px] h-6.5">
-                              View Audit
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })
+                    filteredKycApps.map((app: any) => (
+                      <TableRow key={app.id} className="hover:bg-slate-50/50">
+                        <TableCell>
+                          <div className="font-semibold text-xs text-slate-900">{app.fullName}</div>
+                          <div className="text-[10px] text-slate-400">App #{app.id} • {new Date(app.createdAt).toLocaleDateString()}</div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="font-mono text-xs text-slate-800">{app.phone}</div>
+                          <span className="inline-flex items-center gap-1 text-[10px] text-emerald-600 font-medium">
+                            <Check className="h-3 w-3" /> OTP Verified
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <div className="text-xs font-mono text-slate-700">PAN: {app.panNumber}</div>
+                          <div className="text-[10px] font-mono text-slate-400">UID: {app.aadhaarNumber}</div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="text-xs font-semibold text-slate-800">₹{app.monthlyIncome.toLocaleString('en-IN')}/mo</div>
+                          <div className="text-[10px] text-slate-500 capitalize">{app.employmentType?.replace("_", " ")}</div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="text-xs font-bold text-slate-900 font-mono">
+                            ₹{app.requestedLimit?.toLocaleString('en-IN')}
+                          </div>
+                          {app.approvedLimit && (
+                            <div className="text-[10px] text-emerald-700 font-semibold">
+                              Approved: ₹{app.approvedLimit.toLocaleString('en-IN')}
+                            </div>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Badge className={`text-[10px] font-medium px-2 py-0.5 rounded border ${
+                            app.status === "approved"
+                              ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                              : app.status === "rejected"
+                              ? "bg-rose-50 text-rose-800 border-rose-200"
+                              : "bg-amber-50 text-amber-800 border-amber-200"
+                          }`}>
+                            {app.status === "approved" ? "Approved" : app.status === "rejected" ? "Rejected" : "Pending Review"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            size="sm"
+                            onClick={() => {
+                              setSelectedKycApp(app);
+                              setCustomApprovalLimit(app.requestedLimit || 50000);
+                            }}
+                            className="bg-slate-900 hover:bg-slate-800 text-white text-xs h-7 px-3"
+                          >
+                            Underwrite
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))
                   )}
                 </TableBody>
               </Table>
             </CardContent>
           </Card>
 
-          {/* HISTORICAL TRANSCRIPT MODAL / DETAILED SIDE PANEL */}
-          {selectedHistoricalCall && (
-            <Card className="mt-6 border-slate-250 bg-white shadow-xs duration-100 animate-in fade-in">
+          {/* UNDERWRITING MODAL / DECISION DRAWER */}
+          {selectedKycApp && (
+            <Card className="border-slate-300 bg-white shadow-md duration-150 animate-in fade-in">
               <CardHeader className="pb-3 border-b border-slate-100 flex flex-row items-center justify-between">
                 <div>
-                  <CardTitle className="text-sm font-semibold text-slate-850 flex items-center gap-2">
-                    <ShieldAlert className="h-4.5 w-4.5 text-slate-600" />
-                    Auditing Call ID #{selectedHistoricalCall.id} — {selectedHistoricalCall.leadName}
+                  <CardTitle className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                    <ShieldCheck className="h-4.5 w-4.5 text-blue-600" />
+                    Credit Decisioning — {selectedKycApp.fullName} ({selectedKycApp.phone})
                   </CardTitle>
-                  <CardDescription className="text-xs text-slate-550">
-                    Audit log recorded on {new Date(selectedHistoricalCall.createdAt).toLocaleString()}.
+                  <CardDescription className="text-xs text-slate-500">
+                    Application #{selectedKycApp.id} submitted on {new Date(selectedKycApp.createdAt).toLocaleString()}.
                   </CardDescription>
                 </div>
-                <Button size="sm" variant="ghost" onClick={() => setSelectedHistoricalCall(null)} className="text-slate-500 hover:text-slate-800 hover:bg-slate-100 text-xs h-7">Close Details</Button>
+                <Button size="sm" variant="ghost" onClick={() => setSelectedKycApp(null)} className="text-slate-500 hover:text-slate-800 text-xs h-7">Close</Button>
+              </CardHeader>
+              <CardContent className="p-5">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  {/* Verified Applicant Info */}
+                  <div className="space-y-3 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                    <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Verified Credentials</h4>
+                    <div className="space-y-2 text-xs">
+                      <div>
+                        <span className="text-slate-400 block text-[10px]">Aadhaar Number (UIDAI verified):</span>
+                        <span className="font-mono font-semibold text-slate-800">{selectedKycApp.aadhaarNumber}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block text-[10px]">PAN Card (NSDL/ITD verified):</span>
+                        <span className="font-mono font-semibold text-slate-800">{selectedKycApp.panNumber}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block text-[10px]">Monthly Net Income:</span>
+                        <span className="font-semibold text-slate-800">₹{selectedKycApp.monthlyIncome.toLocaleString('en-IN')}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block text-[10px]">Employment Profile:</span>
+                        <span className="font-medium text-slate-800 capitalize">{selectedKycApp.employmentType?.replace("_", " ")}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Limit Adjustment & Risk Scoring */}
+                  <div className="space-y-3 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                    <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Approved Credit Limit</h4>
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs text-slate-600">Sanction Amount:</span>
+                        <span className="text-base font-bold text-emerald-700 font-mono">₹{customApprovalLimit.toLocaleString('en-IN')}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="3000"
+                        max="75000"
+                        step="1000"
+                        value={customApprovalLimit}
+                        onChange={(e) => setCustomApprovalLimit(parseInt(e.target.value))}
+                        className="w-full accent-slate-900 cursor-pointer"
+                      />
+                      <div className="flex justify-between text-[10px] text-slate-400">
+                        <span>₹3,000</span>
+                        <span>₹50,000 (Default)</span>
+                        <span>₹75,000</span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 italic">
+                        0% interest pay-in-3 credit line is automatically synced to the customer profile.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Decision Actions */}
+                  <div className="space-y-3 bg-slate-50 p-4 rounded-xl border border-slate-200 flex flex-col justify-between">
+                    <div>
+                      <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Officer Decision</h4>
+                      <p className="text-xs text-slate-600 mt-1">Reviewing as <strong className="text-slate-900">{ROLE_CONFIG[currentRole].label}</strong>.</p>
+                    </div>
+
+                    <div className="space-y-2 pt-2">
+                      <Button
+                        onClick={() => handleApproveKyc(selectedKycApp.id, customApprovalLimit)}
+                        className="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs h-9 font-semibold gap-1.5 shadow-xs"
+                      >
+                        <Check className="h-4 w-4" />
+                        Approve &amp; Grant ₹{customApprovalLimit.toLocaleString('en-IN')}
+                      </Button>
+
+                      <Button
+                        onClick={() => handleRejectKyc(selectedKycApp.id, rejectionReason)}
+                        variant="outline"
+                        className="w-full border-rose-200 text-rose-700 hover:bg-rose-50 text-xs h-8 font-medium gap-1"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                        Reject Application
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        {/* ── TAB 4: CALL AUDIO REPLAY & QUALITY AUDITS ── */}
+        <TabsContent value="history" className="mt-4 space-y-4">
+          <div className="flex justify-between items-center">
+            <div>
+              <h3 className="text-base font-semibold text-slate-900">Call Audio Recordings &amp; Quality Audits</h3>
+              <p className="text-xs text-slate-500">Listen to recorded conversation audio, verify transcripts, and inspect compliance grounding scores.</p>
+            </div>
+          </div>
+
+          <Card className="border-slate-200 bg-white shadow-2xs">
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader className="bg-slate-50/80">
+                  <TableRow>
+                    <TableHead className="text-[10px] font-bold uppercase text-slate-500">Call ID</TableHead>
+                    <TableHead className="text-[10px] font-bold uppercase text-slate-500">Lead Contact</TableHead>
+                    <TableHead className="text-[10px] font-bold uppercase text-slate-500">Summary / Topic</TableHead>
+                    <TableHead className="text-[10px] font-bold uppercase text-slate-500">Sentiment</TableHead>
+                    <TableHead className="text-[10px] font-bold uppercase text-slate-500">Cost USD</TableHead>
+                    <TableHead className="text-[10px] font-bold uppercase text-slate-500 text-right">Audit &amp; Audio</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(callsQuery.data ?? []).length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center py-12 text-slate-400 text-xs italic">
+                        No recorded calls found in database.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    (callsQuery.data ?? []).map((call: any) => (
+                      <TableRow key={call.id} className="hover:bg-slate-50/50">
+                        <TableCell className="font-mono text-xs font-semibold text-slate-800">#{call.id}</TableCell>
+                        <TableCell>
+                          <div className="font-medium text-xs text-slate-900">{call.leadName}</div>
+                          <div className="text-[10px] font-mono text-slate-400">{call.leadPhone}</div>
+                        </TableCell>
+                        <TableCell className="text-xs text-slate-600 max-w-xs truncate italic">"{call.summary || 'Customer inquiry'}"</TableCell>
+                        <TableCell>
+                          <Badge className="text-[10px] capitalize bg-slate-100 text-slate-700 border-slate-200">
+                            {call.overallSentiment || "neutral"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="font-mono text-xs text-slate-700">${parseFloat(call.totalCost || "0").toFixed(4)}</TableCell>
+                        <TableCell className="text-right">
+                          <Button size="sm" onClick={() => handleViewHistoricalCall(call)} className="bg-slate-900 hover:bg-slate-800 text-white text-xs h-7 px-3 gap-1.5">
+                            <Volume2 className="h-3 w-3" />
+                            Listen &amp; Audit
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+
+          {/* HISTORICAL TRANSCRIPT & AUDIO REPLAY MODAL */}
+          {selectedHistoricalCall && (
+            <Card className="border-slate-300 bg-white shadow-md duration-150 animate-in fade-in">
+              <CardHeader className="pb-3 border-b border-slate-100 flex flex-row items-center justify-between flex-wrap gap-2">
+                <div>
+                  <CardTitle className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                    <Volume2 className="h-5 w-5 text-indigo-600" />
+                    Audio Transcript &amp; Audit: Call #{selectedHistoricalCall.id} — {selectedHistoricalCall.leadName} ({selectedHistoricalCall.leadPhone})
+                  </CardTitle>
+                  <CardDescription className="text-xs text-slate-500">
+                    Recorded on {new Date(selectedHistoricalCall.createdAt).toLocaleString()}.
+                  </CardDescription>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    onClick={handlePlayFullConversation}
+                    className={`text-xs h-8 px-3 gap-1.5 font-semibold shadow-xs ${
+                      isPlayingFullSession
+                        ? "bg-rose-600 hover:bg-rose-700 text-white animate-pulse"
+                        : "bg-indigo-600 hover:bg-indigo-700 text-white"
+                    }`}
+                  >
+                    {isPlayingFullSession ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+                    {isPlayingFullSession ? "Pause Full Call" : "▶ Play Entire Call Audio"}
+                  </Button>
+
+                  <Button size="sm" variant="ghost" onClick={() => { setSelectedHistoricalCall(null); if (isPlayingFullSession) handlePlayFullConversation(); }} className="text-slate-500 hover:text-slate-800 text-xs h-8">
+                    Close Details
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent className="p-5">
                 {loadingHistoricalTranscript ? (
                   <div className="py-12 flex justify-center items-center gap-2 text-slate-500 text-xs">
-                    <Loader2 className="h-4 w-4 animate-spin text-slate-550" />
-                    Loading historical transcript...
+                    <Loader2 className="h-4 w-4 animate-spin text-slate-500" />
+                    Loading call recording &amp; transcript turns...
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     {/* Transcript flow */}
                     <div className="md:col-span-2 space-y-4">
-                      <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest pb-1 border-b border-slate-100">Conversation Script</h4>
-                      <ScrollArea className="h-[300px] pr-4">
-                        <div className="space-y-4">
-                          {historicalTranscript.map((turn) => (
-                            <div key={turn.id} className="space-y-1">
-                              <span className={`text-[9px] font-semibold uppercase tracking-wider ${turn.speaker === "agent" ? "text-slate-600" : "text-slate-450"}`}>
-                                {turn.speaker === "agent" ? "You (Agent)" : "Customer"}
-                              </span>
-                              <div className={`p-3 rounded text-xs leading-relaxed ${turn.speaker === "agent" ? "bg-slate-50 border border-slate-200/60 text-slate-700" : "bg-white border border-slate-200 text-slate-700"}`}>
-                                {turn.text}
-                              </div>
+                      <div className="flex justify-between items-center pb-1 border-b border-slate-100">
+                        <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Conversation Script ({historicalTranscript.length} Turns)</h4>
+                        <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-1">
+                          <Volume2 className="h-3 w-3" /> Interactive Audio Replay Active
+                        </span>
+                      </div>
+
+                      <ScrollArea className="h-[340px] pr-4">
+                        <div className="space-y-3">
+                          {historicalTranscript.length === 0 ? (
+                            <div className="text-center py-10 text-xs text-slate-400 italic">
+                              No transcript recorded for this session.
                             </div>
-                          ))}
+                          ) : (
+                            historicalTranscript.map((turn: any, index: number) => {
+                              const isPlayingThisTurn = playingTurnIndex === index;
+                              return (
+                                <div key={turn.id || index} className={`p-3.5 rounded-xl text-xs leading-relaxed space-y-2 transition-all ${
+                                  isPlayingThisTurn
+                                    ? "bg-indigo-50/80 border-2 border-indigo-500 shadow-xs"
+                                    : turn.speaker === "agent"
+                                    ? "bg-slate-50 border border-slate-200 text-slate-800"
+                                    : "bg-white border border-slate-200 text-slate-700"
+                                }`}>
+                                  <div className="flex justify-between items-center text-[10px]">
+                                    <span className={`font-bold uppercase tracking-wider ${turn.speaker === "agent" ? "text-slate-800" : "text-blue-600"}`}>
+                                      {turn.speaker === "agent" ? "Sales Manager (You)" : "Customer"}
+                                    </span>
+
+                                    {/* Universal Listen / Play Audio Button for Every Turn */}
+                                    <button
+                                      onClick={() => handlePlayTurnAudio(turn.text, turn.audioUrl, index)}
+                                      className={`flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 rounded-lg border transition-all ${
+                                        isPlayingThisTurn
+                                          ? "bg-indigo-600 text-white border-indigo-700 shadow-xs"
+                                          : "bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border-indigo-200"
+                                      }`}
+                                    >
+                                      {isPlayingThisTurn ? (
+                                        <>
+                                          <Pause className="h-3 w-3 text-white animate-pulse" />
+                                          <span>Pause Speech</span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Play className="h-3 w-3 text-indigo-600" />
+                                          <span>Listen to Speech</span>
+                                        </>
+                                      )}
+                                    </button>
+                                  </div>
+                                  <p className="text-xs font-normal leading-relaxed text-slate-800">{turn.text}</p>
+                                </div>
+                              );
+                            })
+                          )}
                         </div>
                       </ScrollArea>
                     </div>
 
-                    {/* Metadata & self check */}
+                    {/* Session Analysis */}
                     <div className="space-y-4">
-                      <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest pb-1 border-b border-slate-100">Session Analysis</h4>
+                      <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest pb-1 border-b border-slate-100">Quality &amp; Grounding Check</h4>
                       
-                      <div className="bg-slate-50 border border-slate-200 p-4 rounded space-y-3.5">
+                      <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl space-y-3.5 text-xs">
                         <div className="space-y-1">
-                          <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block">Call Summary</span>
-                          <p className="text-xs text-slate-700 leading-relaxed italic">"{selectedHistoricalCall.summary}"</p>
+                          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Call Summary</span>
+                          <p className="text-slate-700 italic">"{selectedHistoricalCall.summary || 'Human sales advisor consultation.'}"</p>
                         </div>
                         
                         <div className="space-y-1 border-t border-slate-200 pt-2.5">
-                          <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block">Post-Call Self-Check</span>
-                          <div className="flex items-center gap-1.5 text-xs text-emerald-600 font-semibold mt-1">
+                          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Factual Grounding Score</span>
+                          <div className="flex items-center gap-1.5 text-emerald-600 font-semibold mt-1">
                             <CheckCircle className="h-4 w-4 text-emerald-500" />
                             <span>100% Factually Grounded</span>
                           </div>
                         </div>
 
                         <div className="space-y-1 border-t border-slate-200 pt-2.5">
-                          <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block">Total spent cost</span>
-                          <p className="text-xs font-semibold text-slate-800">${parseFloat(selectedHistoricalCall.totalCost || "0").toFixed(4)} USD</p>
+                          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Inference Cost</span>
+                          <p className="font-mono font-semibold text-slate-800">${parseFloat(selectedHistoricalCall.totalCost || "0").toFixed(4)} USD</p>
                         </div>
                       </div>
                     </div>
@@ -863,99 +1601,27 @@ export default function Demo() {
           )}
         </TabsContent>
 
-        {/* ── TAB 4: CRM PERFORMANCE ANALYTICS ── */}
-        <TabsContent value="analytics" className="mt-4">
-          
-          {/* Stats Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-            <Card className="border-slate-200 bg-white p-4 flex items-center justify-between shadow-xs">
-              <div className="space-y-1">
-                <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Prospect Funnel</span>
-                <p className="text-2xl font-semibold text-slate-900">{analytics.totalLeads}</p>
-              </div>
-              <User className="h-7 w-7 text-slate-400" />
-            </Card>
-            <Card className="border-slate-200 bg-white p-4 flex items-center justify-between shadow-xs">
-              <div className="space-y-1">
-                <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Conversion Ratio</span>
-                <div className="flex items-baseline gap-1.5">
-                  <p className="text-2xl font-semibold text-slate-900">{analytics.conversionRate.toFixed(1)}%</p>
-                  <TrendingUp className="h-3.5 w-3.5 text-emerald-600" />
-                </div>
-              </div>
-              <TrendingUp className="h-7 w-7 text-emerald-550" />
-            </Card>
-            <Card className="border-slate-200 bg-white p-4 flex items-center justify-between shadow-xs">
-              <div className="space-y-1">
-                <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Completed Sessions</span>
-                <p className="text-2xl font-semibold text-slate-900">{analytics.totalCalls}</p>
-              </div>
-              <PhoneCall className="h-7 w-7 text-slate-400" />
-            </Card>
-            <Card className="border-slate-200 bg-white p-4 flex items-center justify-between shadow-xs">
-              <div className="space-y-1">
-                <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">API Usage Cost</span>
-                <p className="text-2xl font-semibold text-slate-900">${analytics.cost.toFixed(4)}</p>
-              </div>
-              <Coins className="h-7 w-7 text-slate-450" />
-            </Card>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            
-            {/* Conversion Funnel */}
-            <Card className="md:col-span-2 border-slate-200 bg-white shadow-xs">
-              <CardHeader>
-                <CardTitle className="text-xs font-semibold uppercase text-slate-500 tracking-wider">Funnel Breakdown</CardTitle>
-                <CardDescription className="text-xs text-slate-500">Distribution of leads according to their status stage.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {(["lead", "objection", "kyc_pending", "converted", "lost"] as const).map((status) => {
-                  const count = (leadsQuery.data ?? []).filter(l => l.status === status).length;
-                  const total = leadsQuery.data?.length ?? 1;
-                  const pct = (count / total) * 100;
-                  const meta = STATUS_META[status];
-
-                  return (
-                    <div key={status} className="space-y-1">
-                      <div className="flex justify-between text-xs">
-                        <span className="text-slate-650 font-medium">{meta.label}</span>
-                        <span className="text-slate-900 font-semibold">{count} ({pct.toFixed(0)}%)</span>
-                      </div>
-                      <div className="w-full bg-slate-100 rounded h-1.5">
-                        <div className={`h-1.5 rounded ${status === "converted" ? "bg-emerald-500" : status === "lost" ? "bg-rose-450" : status === "kyc_pending" ? "bg-indigo-500" : status === "objection" ? "bg-amber-500" : "bg-slate-400"}`} style={{ width: `${pct}%` }} />
-                      </div>
-                    </div>
-                  );
-                })}
-              </CardContent>
+        {/* ── TAB 5: ANALYTICS & COST ── */}
+        <TabsContent value="analytics" className="mt-4 space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <Card className="border-slate-200 bg-white p-4 shadow-2xs">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Funnel Leads</span>
+              <div className="text-2xl font-bold text-slate-900 mt-1">{analytics.totalLeads}</div>
             </Card>
 
-            {/* Compliance Health */}
-            <Card className="border-slate-200 bg-white shadow-xs flex flex-col justify-between">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-xs font-semibold uppercase text-slate-500 tracking-wider">Compliance Grade</CardTitle>
-                <CardDescription className="text-xs text-slate-500">Audited compliance index rating.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-5 flex-1 flex flex-col justify-center">
-                <div className="text-center space-y-1.5">
-                  <div className="inline-flex h-20 w-20 rounded-full border-2 border-indigo-200 border-t-indigo-600 items-center justify-center text-xl font-bold text-slate-800">
-                    {analytics.complianceScore}%
-                  </div>
-                  <p className="text-xs font-semibold text-emerald-650 mt-1">Audit status: Clean</p>
-                </div>
-                
-                <div className="bg-slate-50 p-3.5 rounded border border-slate-200 space-y-2 text-[11px] leading-relaxed text-slate-650">
-                  <div className="flex gap-2 items-start">
-                    <CheckCircle className="h-4 w-4 text-emerald-500 shrink-0" />
-                    <span><strong>DPDP Act 2023 Compliant</strong>: Nonce state tracking matches regulations.</span>
-                  </div>
-                  <div className="flex gap-2 items-start">
-                    <CheckCircle className="h-4 w-4 text-emerald-500 shrink-0" />
-                    <span><strong>Approval Guardrail</strong>: Auto-rejects guarantee loan promises.</span>
-                  </div>
-                </div>
-              </CardContent>
+            <Card className="border-slate-200 bg-white p-4 shadow-2xs">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Underwriting Sanctions</span>
+              <div className="text-2xl font-bold text-emerald-700 mt-1 font-mono">₹{analytics.approvedLimitsTotal.toLocaleString('en-IN')}</div>
+            </Card>
+
+            <Card className="border-slate-200 bg-white p-4 shadow-2xs">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Live Calls</span>
+              <div className="text-2xl font-bold text-slate-900 mt-1">{analytics.totalCalls}</div>
+            </Card>
+
+            <Card className="border-slate-200 bg-white p-4 shadow-2xs">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Voice Inference Spend</span>
+              <div className="text-2xl font-bold text-slate-900 mt-1 font-mono">${analytics.cost.toFixed(4)}</div>
             </Card>
           </div>
         </TabsContent>

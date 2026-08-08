@@ -43,6 +43,7 @@ export const calls = pgTable("calls", {
   summary: text("summary"),
   overallSentiment: varchar("overallSentiment", { length: 32 }),
   totalCost: varchar("totalCost", { length: 32 }).default("0.0"),
+  recordingUrl: text("recordingUrl"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
@@ -58,8 +59,32 @@ export const callTranscripts = pgTable("call_transcripts", {
   sentiment: varchar("sentiment", { length: 32 }),
   assistantResponse: text("assistantResponse"),
   costUsd: varchar("costUsd", { length: 32 }).default("0.0"),
+  audioUrl: text("audioUrl"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
 export type CallTranscript = typeof callTranscripts.$inferSelect;
 export type InsertCallTranscript = typeof callTranscripts.$inferInsert;
+
+export const kycApplications = pgTable("kyc_applications", {
+  id: serial("id").primaryKey(),
+  leadId: integer("leadId"),
+  fullName: text("fullName").notNull(),
+  phone: varchar("phone", { length: 32 }).notNull(),
+  otpCode: varchar("otpCode", { length: 16 }),
+  otpVerified: varchar("otpVerified", { length: 16 }).default("true").notNull(),
+  aadhaarNumber: varchar("aadhaarNumber", { length: 32 }).notNull(),
+  panNumber: varchar("panNumber", { length: 32 }).notNull(),
+  monthlyIncome: integer("monthlyIncome").default(25000).notNull(),
+  employmentType: varchar("employmentType", { length: 64 }).default("salaried").notNull(),
+  requestedLimit: integer("requestedLimit").default(50000).notNull(),
+  approvedLimit: integer("approvedLimit"),
+  status: varchar("status", { length: 64 }).default("pending").notNull(), // pending, under_review, approved, rejected
+  reviewedBy: text("reviewedBy"),
+  rejectionReason: text("rejectionReason"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+
+export type KycApplication = typeof kycApplications.$inferSelect;
+export type InsertKycApplication = typeof kycApplications.$inferInsert;
