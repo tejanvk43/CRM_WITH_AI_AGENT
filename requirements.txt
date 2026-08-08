@@ -9,3 +9,4 @@ sounddevice>=0.4.6
 faster-whisper>=1.0.0
 pyttsx3>=2.90
 scipy>=1.10.0
+langgraph==0.6.11
