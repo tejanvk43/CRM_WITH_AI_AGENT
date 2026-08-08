@@ -626,7 +626,7 @@ After warmup: Every turn takes 0.7-1.5 seconds (everything pre-loaded in RAM).
 |---|---|---|
 | TWILIO_ACCOUNT_SID | Yes | Twilio Account SID (AC...) |
 | TWILIO_AUTH_TOKEN | Yes | Twilio Auth Token |
-| TWILIO_PHONE_NUMBER | Yes | Registered Twilio number (e.g. +15625736985) |
+| TWILIO_PHONE_NUMBER | Yes | Registered Twilio number ( |
 | SARVAM_API_KEY | Yes | Sarvam AI API subscription key (sk_...) |
 | DATABASE_URL | Yes | Supabase PostgreSQL connection string |
 | NGROK_URL | Yes | Public base URL (ngrok in dev, domain in prod) |
@@ -636,7 +636,7 @@ After warmup: Every turn takes 0.7-1.5 seconds (everything pre-loaded in RAM).
 | SMTP_PASSWORD | Yes | Gmail App Password (16 characters) |
 | SMTP_FROM | Yes | Sender email address |
 | ADMIN_EMAIL | Optional | Fallback email for auto-created leads |
-| MANAGER_PHONE | Yes | Sales manager phone for human transfer |
+| MANAGER_PHONE | Yes | Sales manager phone for human transfer, configured through MANAGER_PHONE |
 | USE_FAST_VOICE | Optional | true (default) = Polly, false = Sarvam TTS |
 
 ---
@@ -723,7 +723,7 @@ In Twilio Console -> Phone Numbers -> Your Number:
 ## 17. Conversation Flow Walkthrough
 
 ```
-Customer calls +15625736985
+Customer calls 
     |
     v
 Twilio fires POST /twilio/voice
