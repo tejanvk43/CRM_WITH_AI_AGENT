@@ -35,7 +35,7 @@ export default function Home() {
   // Callback Modal State
   const [showCallbackModal, setShowCallbackModal] = useState(false);
   const [callbackName, setCallbackName] = useState("");
-  const [callbackPhone, setCallbackPhone] = useState("+918919998149");
+  const [callbackPhone, setCallbackPhone] = useState("+910000000000");
   const [callbackAmount, setCallbackAmount] = useState(50000);
   const [isCalling, setIsCalling] = useState(false);
   const [callSuccess, setCallSuccess] = useState(false);

@@ -7,6 +7,9 @@ venv/
 .venv/
 env/
 .env
+.env.*
+*.bak
+*_backup*
 .manus-logs/
 # Node.js
 node_modules/

@@ -113,7 +113,7 @@ export default function Demo() {
 
   // Sales Manager Phone Configuration (Saved locally)
   const [managerPhone, setManagerPhone] = useState(() => {
-    return localStorage.getItem("sales_manager_phone") || "+918919998149";
+    return localStorage.getItem("sales_manager_phone") || "+910000000000";
   });
   const [showManagerConfig, setShowManagerConfig] = useState(false);
 

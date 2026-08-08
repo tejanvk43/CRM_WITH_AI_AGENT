@@ -1,4 +1,4 @@
-﻿# FlexiPay AI Voice CRM — Complete Architecture & Implementation Guide
+# FlexiPay AI Voice CRM — Complete Architecture & Implementation Guide
 
 > A production-grade, AI-powered inside-sales voice co-pilot built for the Indian market.
 > Handles inbound customer calls, speaks in English and Telugu, qualifies leads, performs KYC checks, sends notifications, and escalates to a human manager — all within a 1–2 second latency budget.
@@ -504,7 +504,7 @@ This handles +91XXXXXXXXXX vs XXXXXXXXXX variations without failing.
 All SMS functions also send a parallel multipart email (plain text + HTML) when the lead has an email address on record.
 
 ```
-SMTP Server: smtp.gmail.com
+SMTP Server: <configured smtp host>
 Port: 587 (STARTTLS)
 Auth: Gmail App Password (16-character)
 Format: Multipart HTML + plain text
@@ -528,7 +528,7 @@ dial = response.dial(
     timeout=30,
     action=fallback_url
 )
-dial.number(MANAGER_PHONE)  # +918919998149
+dial.number(MANAGER_PHONE)  # <configured manager phone>
 ```
 
 **Why caller_id must be the Twilio number:** Indian telecom carriers (BSNL, Airtel, Jio) reject transfers where the caller ID is not a verified, registered number. Using any other number causes call failure. This was a critical bug fix.
@@ -630,7 +630,7 @@ After warmup: Every turn takes 0.7-1.5 seconds (everything pre-loaded in RAM).
 | SARVAM_API_KEY | Yes | Sarvam AI API subscription key (sk_...) |
 | DATABASE_URL | Yes | Supabase PostgreSQL connection string |
 | NGROK_URL | Yes | Public base URL (ngrok in dev, domain in prod) |
-| SMTP_HOST | Yes | SMTP hostname (smtp.gmail.com) |
+| SMTP_HOST | Yes | SMTP hostname (e.g., smtp.gmail.com) |
 | SMTP_PORT | Yes | SMTP port (587 for STARTTLS) |
 | SMTP_USER | Yes | SMTP login email |
 | SMTP_PASSWORD | Yes | Gmail App Password (16 characters) |
@@ -737,7 +737,7 @@ AI: "Welcome to FlexiPay. This call is AI-assisted and recorded.
     v
 Twilio fires POST /twilio/gather?call_id=42
 
-  -- "Talk to manager"  --> Transfer bridge --> Dial +918919998149
+  -- "Talk to manager"  --> Transfer bridge --> Dial <configured manager phone>
   -- "Check my KYC"    --> DB lookup -> speak status -> SMS + Email
   -- "Send terms"      --> Speak summary -> SMS + Email
   -- "What documents"  --> Speak checklist -> SMS + Email

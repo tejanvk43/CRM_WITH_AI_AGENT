@@ -43,14 +43,14 @@ What blocks the response in `/twilio/gather` for more than 15 seconds:
 - No architectural changes — LangGraph graph, endpoints, and data flow are identical.
 
 ### `agents/rag_agent.py` and `agents/nba_agent.py`
-- Removed hardcoded `SARVAM_API_KEY` default (`sk_ouoli4yi_…`). Keys are now read from the environment only; each agent already had a keyword fallback, so both remain fully functional.
+- Removed hardcoded `SARVAM_API_KEY` default. Keys are now read from the environment only; each agent already had a keyword fallback, so both remain fully functional.
 
 ## 3. One Env Var You Must Set
 
 Your `E:\CRM_KL\.env` does **not** contain `SARVAM_API_KEY` — add it:
 
 ```
-SARVAM_API_KEY=sk_ouoli4yi_TeQxY387JyL86NPGEaG7KRAP
+SARVAM_API_KEY=<set in Netlify environment variables>
 ```
 
 (If you'd rather not re-enable Sarvam, leave it unset — the app will work with Twilio's built-in `alice` voice, and you'll just see the `[SECRETS]` startup warning.)
